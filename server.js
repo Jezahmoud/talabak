@@ -94,7 +94,7 @@ function publicOrder(o) {
   const streams = [...o.streams].map(s => ({ ageSec: Math.round((now() - s.startedAt) / 1000), blocked: s.blocked,
     lastDrainAgoSec: Math.round((now() - s.lastFlowAt) / 1000), sentSec: Math.round(s.framesSent * FRAME_SEC), ua: s.ua }));
   return { id: o.id, number: o.number, status: o.status, createdAt: o.createdAt, readyAt: o.readyAt, ackAt: o.ackAt, pickedAt: o.pickedAt,
-    phoneTail: o.phone ? o.phone.slice(-4) : '', linkedDevices: devicesForOrder(o).length,
+    phoneTail: o.phone ? o.phone.slice(-4) : '', linkedDevices: devicesForOrder(o).length, table: o.table || '',
     heard: !!o.heard, pushCount: o.push.length, pushApple: o.push.filter(x => String(x.endpoint).includes('push.apple.com')).length, apnsCount: o.apns.length, streams, events: o.events.slice(-12),
     reactionSec: o.readyAt && o.ackAt ? Math.round((o.ackAt - o.readyAt) / 100) / 10 : null };
 }
@@ -231,7 +231,7 @@ const page = (name, base = PUBLIC_URL) => fs.readFileSync(path.join(__dirname, '
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v12', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v13', 'text/plain');
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
     if ((m = p.match(/^\/o\/([a-f0-9]+)$/))) {
@@ -292,7 +292,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/orders' && req.method === 'GET') return json(res, [...orders.values()].filter(o => now() - o.createdAt < 6 * 3600e3).reverse().map(publicOrder));
     if (p === '/api/open' && req.method === 'GET') return json(res, [...orders.values()].filter(o => o.status === 'waiting' && now() - o.createdAt < 30 * 60e3).reverse().map(o => ({ id: o.id, number: o.number })));
     if (p === '/api/orders' && req.method === 'POST') { const b = await readBody(req); const o = newOrder(b.number, 'cashier', { phone: b.phone }); o.base = BASE; return json(res, publicOrder(o)); }
-    if ((m = p.match(/^\/api\/orders\/([a-f0-9]+)(?:\/(ready|picked|ack|push|apns|ping|test|phone|claim))?$/))) {
+    if ((m = p.match(/^\/api\/orders\/([a-f0-9]+)(?:\/(ready|picked|ack|push|apns|ping|test|phone|claim|table))?$/))) {
       const o = orders.get(m[1]); if (!o) return json(res, { error: 'not found' }, 404);
       const a = m[2]; const b = req.method === 'POST' ? await readBody(req) : {};
       if (a === 'ready') setReady(o, 'cashier');
@@ -303,6 +303,7 @@ const server = http.createServer(async (req, res) => {
       else if (a === 'ping') { const st = String(b.state || '').slice(0, 80); if (st === 'heard_yes') o.heard = true; log(o, 'page', { state: st }); }
       else if (a === 'test') { for (const st of o.streams) st.testTone = true; log(o, 'test_tone'); }
       else if (a === 'phone') { o.phone = normPhone(b.phone); log(o, 'phone_set', { tail: o.phone.slice(-4), linked: devicesForOrder(o).length }); }
+      else if (a === 'table') { o.table = String(b.table || '').replace(/[^0-9A-Za-z\u0600-\u06FF ]/g, '').slice(0, 12); log(o, 'table_set', { table: o.table }); }
       else if (a === 'claim' && b.device && devices.has(String(b.device))) { o.devices.add(String(b.device)); log(o, 'device_claimed', { linked: devicesForOrder(o).length }); }
       return json(res, publicOrder(o));
     }

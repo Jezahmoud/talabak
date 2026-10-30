@@ -32,7 +32,7 @@
 async function load() {
   try {
     const l = await (await fetch('/api/orders')).json();
-    const ready = l.filter(o => o.status === 'ready'), wait = l.filter(o => o.status === 'waiting');
+    const ready = l.filter(o => o.status === 'ready' && !o.table), wait = l.filter(o => o.status === 'waiting' && !o.table);
     document.getElementById('ready').innerHTML = ready.length ? ready.map(o => `<div class="n">${o.number}</div>`).join('') : '<div class="empty">لا توجد طلبات جاهزة</div>';
     document.getElementById('wait').innerHTML = wait.length ? wait.map(o => `<div class="n">${o.number}</div>`).join('') : '<div class="empty">—</div>';
   } catch {}

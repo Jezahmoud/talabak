@@ -57,6 +57,14 @@
   <div class="note ok hidden" id="armed">
     ✅ التنبيه مفعل. اقفل الشاشة وحط الجوال في جيبك، وبيرن جوالك أول ما يجهز طلبك حتى لو كان على الصامت.
   </div>
+  <div class="note hidden" id="tablecard">
+    <b>جالس على طاولة؟</b> اكتب رقمها ونوصل لك طلبك بدون ما تنتظر أي تنبيه.
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <input id="table" inputmode="numeric" placeholder="رقم الطاولة" style="flex:1;font:20px Tahoma;padding:12px;border:1px solid #cfcac1;border-radius:12px;text-align:center">
+      <button class="big ghost" id="savetable" style="width:auto;padding:12px 18px">احفظ</button>
+    </div>
+    <p class="hidden" id="tableok" style="color:var(--ok);font-weight:800;margin:10px 0 0"></p>
+  </div>
   <div class="note hidden" id="heard">
     <b style="font-size:19px">خطوة أخيرة: هل سمعت نغمة التجربة؟</b><br><span style="color:var(--muted)">التنبيه ما يكتمل إلا بعد ما تسمعها، عشان نضمن إنك تسمعه وقت ما يجهز طلبك.</span>
     <div style="display:flex;gap:8px;margin-top:10px">
@@ -145,7 +153,7 @@ async function enablePush() {
 }
 
 function appArmedUI(on) {
-  $('arm').classList.add('hidden'); $('armed').classList.remove('hidden');
+  $('arm').classList.add('hidden'); $('armed').classList.remove('hidden'); $('tablecard').classList.remove('hidden');
   $('armed').innerHTML = on ? '✅ التنبيه مفعل. بيوصلك إشعار يرن ويهتز ويضيء الشاشة أول ما يجهز طلبك. اقفل الجوال وحطه في جيبك.'
     : '<span style="color:var(--warn)">الإشعارات غير مفعلة لهذا التطبيق. افتح الإعدادات ← الإشعارات ← «طلبك جاهز» وفعّل السماح بالإشعارات.</span>';
 }
@@ -169,11 +177,13 @@ $('arm').onclick = async () => {
   // البث الصوتي يبقى شغالا على كل الأجهزة، والإشعار قناة إضافية فوقه (أندرويد)
   armed = true;
   // التفعيل لا يكتمل إلا بعد أن يؤكد العميل أنه سمع نغمة التجربة
-  $('arm').classList.add('hidden'); $('heard').classList.remove('hidden');
+  $('arm').classList.add('hidden'); $('heard').classList.remove('hidden'); $('tablecard').classList.remove('hidden');
   if (pushOn && !IOS) $('armed').textContent = '✅ التنبيه مفعل بالصوت والاهتزاز والإشعار. اقفل الشاشة وحط الجوال في جيبك.';
   api('ping', { state: `armed audio=${wantAudio} push=${pushOn} ios=${IOS} app=${STANDALONE}` });
 };
 let retest = null;
+$('savetable').onclick = () => { const t = $('table').value.trim(); if (!t) return $('table').focus();
+  api('table', { table: t }); $('tableok').textContent = '✅ بنوصل طلبك لطاولة ' + t; $('tableok').classList.remove('hidden'); $('table').parentElement.classList.add('hidden'); };
 $('yes').onclick = () => { clearInterval(retest); $('heard').classList.add('hidden'); $('louder').classList.add('hidden'); $('armed').classList.remove('hidden'); haptic(); api('ping', { state:'heard_yes' }); };
 $('no').onclick = () => { $('louder').classList.remove('hidden'); api('test'); api('ping', { state:'heard_no' });
   if (player.paused) startAudio().catch(()=>{});
@@ -221,7 +231,7 @@ function render() {
     document.body.classList.add('ready'); $('ack').classList.remove('hidden'); $('arm').classList.add('hidden');
     api('ping', { state: 'ready_page_' + document.visibilityState }); showAlarm();
   } else if (status === 'picked') {
-    stopAlarm(); ['ack','armed','paused','rearm','arm','heard','louder'].forEach(x=>$(x).classList.add('hidden'));
+    stopAlarm(); ['ack','armed','paused','rearm','arm','heard','louder','tablecard'].forEach(x=>$(x).classList.add('hidden'));
     $('done').classList.remove('hidden'); $('status').textContent = 'تم التسليم'; stopAudio();
     if (IOS && !APP) $('setup').classList.remove('hidden');
   }

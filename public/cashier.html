@@ -51,6 +51,7 @@ function audioState(o) {
 }
 // إشارة مرور: هل يمكن الوصول لجوال العميل الآن؟ تحسم قبل أن يبتعد عن الكاشير
 function reach(o) {
+  if (o.table) return `<div class="tl g">🪑 طاولة ${o.table}: وصّل الطلب للطاولة، لا يحتاج تنبيها</div>` + (o.status !== 'waiting' ? '' : '');
   if (o.status !== 'waiting') return '';
   const live = o.streams.some(s => !(s.blocked && s.lastDrainAgoSec > 8));
   if (o.linkedDevices || o.pushCount) return '<div class="tl g">🟢 يرن ويهتز حتى والجوال مقفل</div>';
@@ -69,6 +70,7 @@ function card(o) {
         ${o.reactionSec != null ? `<br>استجاب العميل بعد <span class="g">${o.reactionSec} ث</span> من إعلان الجاهزية` : ''}</div></div>
     <div class="acts">
       ${o.status==='waiting' ? `<button class="r" onclick="post('/api/orders/${o.id}/ready').then(load)">جاهز</button>` : ''}
+      ${o.status!=='picked' && !o.table ? `<button class="p" onclick="const t=prompt('رقم الطاولة'); if(t) post('/api/orders/${o.id}/table',{table:t}).then(load)">طاولة</button>` : ''}
       ${o.status!=='picked' ? `<button class="p" onclick="post('/api/orders/${o.id}/picked').then(load)">تم التسليم</button>` : ''}
     </div>
     <details><summary>سجل الأحداث</summary><pre>${ev}</pre></details>
