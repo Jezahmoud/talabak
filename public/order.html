@@ -87,7 +87,8 @@
   <button id="ack2">أنا في الطريق</button>
 </div>
 <label id="hl" aria-hidden="true" style="position:fixed;top:0;left:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none"><input type="checkbox" switch id="hs"></label>
-<footer>بدون تطبيق ولا تسجيل. يرن والشاشة مقفلة، ما لم تقفل هذه الصفحة أو تشغل مقطع أو موسيقى.</footer>
+<footer id="foot">بدون تطبيق ولا تسجيل. يرن والشاشة مقفلة، ما لم تقفل هذه الصفحة أو تشغل مقطع أو موسيقى.<br>
+<a href="/app" id="reglink" style="color:var(--brand);font-weight:800;font-size:14px">تبي جوالك يهتز ويضيء؟ سجّل مرة وحدة</a></footer>
 <audio id="player" preload="none" playsinline></audio>
 <script>
 const id = location.pathname.split('/').pop();
@@ -154,7 +155,7 @@ async function appBoot() {
   else if (('Notification' in window) && Notification.permission === 'denied') { appArmedUI(false); }
   else { $('arm').textContent = 'فعّل التنبيه'; }
 }
-if (APP) appBoot();
+if (APP) { appBoot(); $('foot').classList.add('hidden'); }
 $('arm').onclick = async () => {
   $('arm').disabled = true;
   if (APP) { pushOn = await enablePush(); armed = true; appArmedUI(pushOn); api('ping', { state: `app_armed push=${pushOn}` }); return; }

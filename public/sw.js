@@ -4,10 +4,16 @@ self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 self.addEventListener('push', e => {
   let d = {}; try { d = e.data.json(); } catch {}
   const n = d.notification || d;
+  const url = n.navigate || n.url || '/app';
   e.waitUntil(self.registration.showNotification(n.title || 'طلبك جاهز', {
     body: n.body || 'طلبك جاهز', tag: n.tag || 'talabak', image: n.image, icon: n.icon, badge: n.badge,
     renotify: true, requireInteraction: true, silent: false,
-    vibrate: [600, 200, 600, 200, 600, 200, 1200], data: { url: n.navigate || n.url }, dir: 'rtl', lang: 'ar'
+    vibrate: [600, 200, 600, 200, 600, 200, 1200], data: { url }, dir: 'rtl', lang: 'ar'
+  }).then(() => {
+    const m = url.match(/\/o\/([a-f0-9]+)/);
+    const body = JSON.stringify({ state: 'sw_notification_shown' });
+    if (m) return fetch(`/api/orders/${m[1]}/ping`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => {});
+    if (n.dev) return fetch('/api/devices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: n.dev, state: 'sw_notification_shown' }) }).catch(() => {});
   }));
 });
 self.addEventListener('notificationclick', e => {

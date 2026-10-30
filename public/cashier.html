@@ -30,6 +30,7 @@
 <div class="top">
   <h1>{{CAFE}} — لوحة الكاشير</h1>
   <div class="cafeqr"><img src="/qr/cafe.svg" alt=""><div>رمز ثابت للمقهى<br>يختار منه العميل رقم طلبه</div></div>
+  <div class="cafeqr"><img src="/qr/app.svg" alt=""><div>رمز التسجيل مرة واحدة<br>يخلي الجوال يهتز ويضيء</div></div>
   <a href="/sticker" target="_blank" style="font:700 15px Tahoma;color:#0f3d2e;padding:10px">ملصق الكاونتر مع رمز الواي فاي</a>
   <span style="display:inline-flex;gap:6px;align-items:center"><input id="phone" type="tel" placeholder="جوال العميل (اختياري)" style="font:16px Tahoma;padding:10px;border:1px solid #ccc;border-radius:10px;width:190px;direction:ltr"><button class="new" id="new">طلب جديد</button></span>
   <span id="devs" style="font:14px Tahoma;color:#5b6b64"></span>
@@ -71,7 +72,9 @@ async function load() {
   document.querySelectorAll('.card').forEach(c => { if (openDetails.has(c.querySelector('a').href)) c.querySelector('details').open = true; });
   openDetails = new Set();
 }
-async function loadDevs() { try { const d = await fetch('/api/devices').then(r=>r.json()); const ok = d.filter(x=>x.subs).length; $('devs').textContent = `جوالات مسجلة: ${ok}` + (d.some(x=>x.lastTest) ? ` · آخر تجربة: ${d.filter(x=>x.lastTest).map(x=>x.lastTest).join('، ')}` : ''); } catch {} }
+const TR = { ok: 'وصل بصوت أو اهتزاز ✅', silent: 'وصل بدون صوت', none: 'ما وصل' };
+async function loadDevs() { try { const d = await fetch('/api/devices').then(r=>r.json());
+  $('devs').innerHTML = `جوالات مسجلة: <b>${d.filter(x=>x.subs).length}</b>` + d.map(x => `<br>${x.apple ? 'ايفون' : 'أندرويد'} ${x.phoneTail ? '…' + x.phoneTail : 'بدون رقم'} · ${x.subs ? 'مشترك' : 'غير مشترك'} · ${x.log.some(e=>e.state==='sw_notification_shown') ? 'عرض الإشعار ✅' : ''} ${x.lastTest ? '· رأي العميل: ' + (TR[x.lastTest] || x.lastTest) : ''}`).join(''); } catch {} }
 load(); setInterval(load, 1500); loadDevs(); setInterval(loadDevs, 5000);
 </script>
 </body>

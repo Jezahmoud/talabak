@@ -152,7 +152,7 @@ function sendRaw(details, contentType) {
 // يبني الرسالتين: Declarative Web Push لأجهزة Apple (يعرضه النظام مباشرة مع الصوت والاهتزاز)، والرسالة التقليدية لعامل الخدمة في أندرويد
 function buildPayload(sub, n, B) {
   if (isApple(sub)) return JSON.stringify({ web_push: 8030, notification: { title: n.title, lang: 'ar', dir: 'rtl', body: n.body, navigate: n.url, silent: false, app_badge: '1' } });
-  return JSON.stringify({ title: n.title, body: n.body, tag: n.tag, url: n.url, image: `${B}/ready-banner.png`, icon: `${B}/icon-192.png`, badge: `${B}/badge.png` });
+  return JSON.stringify({ title: n.title, body: n.body, tag: n.tag, url: n.url, dev: n.dev, image: `${B}/ready-banner.png`, icon: `${B}/icon-192.png`, badge: `${B}/badge.png` });
 }
 async function pushTo(sub, n, B = PUBLIC_URL) {
   const payload = buildPayload(sub, n, B);
@@ -230,7 +230,7 @@ const page = (name, base = PUBLIC_URL) => fs.readFileSync(path.join(__dirname, '
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v9', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v10', 'text/plain');
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
     if ((m = p.match(/^\/o\/([a-f0-9]+)$/))) {
@@ -243,8 +243,8 @@ const server = http.createServer(async (req, res) => {
     if (p === '/sw.js') return send(res, 200, fs.readFileSync(path.join(__dirname, 'public/sw.js')), 'text/javascript');
     if (p === '/chime.mp3') return send(res, 200, fs.readFileSync(path.join(__dirname, 'assets/chime.mp3')), 'audio/mpeg');
     if ((m = p.match(/^\/stream\/([a-f0-9]+)$/))) { const o = orders.get(m[1]); if (!o || o.status === 'picked') return send(res, 404, ''); return startStream(o, req, res); }
-    if ((m = p.match(/^\/qr\/([a-f0-9]+|cafe)\.svg$/))) {
-      const target = m[1] === 'cafe' ? `${BASE}/c` : `${BASE}/o/${m[1]}`;
+    if ((m = p.match(/^\/qr\/([a-f0-9]+|cafe|app)\.svg$/))) {
+      const target = m[1] === 'cafe' ? `${BASE}/c` : m[1] === 'app' ? `${BASE}/app` : `${BASE}/o/${m[1]}`;
       return send(res, 200, await QRCode.toString(target, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }), 'image/svg+xml');
     }
     if (p === '/qr.svg') return send(res, 200, await QRCode.toString(String(url.searchParams.get('text') || '').slice(0, 500), { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }), 'image/svg+xml');
@@ -270,7 +270,7 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (m[2] === 'report') { devLog(d, 'test_report', { result: String(b.result || '').slice(0, 40) }); d.lastTest = String(b.result || '').slice(0, 40); return json(res, { ok: true }); }
       if (!d.subs.length) return json(res, { ok: false, error: 'no_sub' });
-      const n = { title: '✅ تجربة التنبيه', body: 'إذا سمعت صوت أو حسيت اهتزاز فكل شي تمام', tag: `test-${Date.now()}`, url: `${BASE}/app?test=1` };
+      const n = { title: '✅ تجربة التنبيه', body: 'إذا سمعت صوت أو حسيت اهتزاز فكل شي تمام', tag: `test-${Date.now()}`, url: `${BASE}/app?test=1`, dev: d.id };
       const out = [];
       for (const sub of d.subs) { try { const r = await pushTo(sub, n, BASE); out.push(r.statusCode); devLog(d, 'test_sent', { status: r.statusCode, apple: isApple(sub) }); }
         catch (e) { out.push(e.statusCode || 0); devLog(d, 'test_error', { status: e.statusCode, msg: String(e.body || e.message).slice(0, 80) }); } }
