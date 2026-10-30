@@ -18,7 +18,7 @@ function baseOf(req) {
   return `${proto}://${req.headers['x-forwarded-host'] || req.headers.host}`;
 }
 const CAFE_NAME = process.env.CAFE_NAME || 'مقهى التجربة';
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');   // على Render يمكن ربطه بقرص دائم
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 // ---------- VAPID (Web Push) ----------
@@ -62,23 +62,42 @@ const PREBUFFER_SEC = Number(process.env.PREBUFFER_SEC || 0.5);
 const BURST_BYTES = Number(process.env.BURST_BYTES || 40000);             // دفعة أولى صغيرة ليبدأ التشغيل، ثم إيقاع حقيقي حتى لا يخزن الجهاز مسبقا
 const CHIME_REPEAT_EVERY_SEC = 6;      // تكرار النغمة حتى يؤكد العميل أو تنتهي المهلة
 const CHIME_MAX_SEC = 180;
+const STREAM_MAX_MIN = Number(process.env.STREAM_MAX_MIN || 60);
 
 // ---------- State ----------
 const orders = new Map();              // id -> order
 let nextNumber = 101;
 const now = () => Date.now();
+const riyadhDay = t => new Date(t + 3 * 3600e3).toISOString().slice(0, 10);   // الترقيم يبدأ من 101 كل يوم بتوقيت الرياض
+// حفظ الطلبات على القرص حتى لا تضيع عند إعادة تشغيل الخادم
+const ordersFile = path.join(DATA_DIR, 'orders.json');
+function writeAtomic(file, data) { const tmp = file + '.tmp'; fs.writeFileSync(tmp, data); fs.renameSync(tmp, file); }
+let saveOT = null;
+function saveOrders() { clearTimeout(saveOT); saveOT = setTimeout(() => { try {
+  const keep = [...orders.values()].filter(o => now() - o.createdAt < 12 * 3600e3)
+    .map(o => ({ ...o, devices: [...o.devices], streams: undefined, repeatTimer: undefined, events: o.events.slice(-60) }));
+  writeAtomic(ordersFile, JSON.stringify({ nextNumber, day: riyadhDay(now()), orders: keep }));
+} catch (e) { console.error('saveOrders', e.message); } }, 500); }
+function loadOrders() { try {
+  const d = JSON.parse(fs.readFileSync(ordersFile, 'utf8'));
+  if (d.day === riyadhDay(now())) nextNumber = d.nextNumber || 101;
+  for (const o of d.orders || []) { o.devices = new Set(o.devices || []); o.streams = new Set(); orders.set(o.id, o); }
+  console.log(`استرجعت ${orders.size} طلبا محفوظا`);
+} catch {} }
+let numberDay = riyadhDay(now());
 function newOrder(number, source = 'cashier', meta = {}) {
-  const id = crypto.randomBytes(5).toString('hex');
+  if (riyadhDay(now()) !== numberDay) { numberDay = riyadhDay(now()); nextNumber = 101; }
+  const id = crypto.randomBytes(8).toString('hex');
   const o = { id, number: String(number ?? nextNumber++), status: 'waiting', source, meta, createdAt: now(), readyAt: null, ackAt: null, pickedAt: null,
     phone: normPhone(meta.phone), devices: new Set(), push: [], apns: [], streams: new Set(), events: [] };
-  orders.set(id, o); log(o, 'created', { source, phone: o.phone ? '***' + o.phone.slice(-4) : undefined }); return o;
+  orders.set(id, o); log(o, 'created', { source, phone: o.phone ? '***' + o.phone.slice(-4) : undefined }); saveOrders(); return o;
 }
 // ---------- Devices (جوالات مسجلة مرة واحدة: تطبيق الشاشة الرئيسية) ----------
 const devicesFile = path.join(DATA_DIR, 'devices.json');
 const devices = new Map();             // id -> { id, subs:[], phone, ua, createdAt, lastSeen, lastTest, log:[] }
 try { for (const d of JSON.parse(fs.readFileSync(devicesFile, 'utf8'))) devices.set(d.id, d); } catch {}
 let saveT = null;
-function saveDevices() { clearTimeout(saveT); saveT = setTimeout(() => { try { fs.writeFileSync(devicesFile, JSON.stringify([...devices.values()])); } catch (e) { console.error(e); } }, 300); }
+function saveDevices() { clearTimeout(saveT); saveT = setTimeout(() => { try { writeAtomic(devicesFile, JSON.stringify([...devices.values()])); } catch (e) { console.error(e); } }, 300); }
 function normPhone(v) { let d = String(v || '').replace(/\D/g, ''); if (!d) return ''; d = d.replace(/^00/, '').replace(/^966/, '').replace(/^0/, ''); return d.slice(-9); }
 function devLog(d, type, data = {}) { d.log = d.log || []; d.log.push({ t: now(), type, ...data }); if (d.log.length > 40) d.log.shift(); saveDevices(); }
 function devicesForOrder(o) {
@@ -89,7 +108,10 @@ function devicesForOrder(o) {
   }
   return out;
 }
-function log(o, type, data = {}) { o.events.push({ t: now(), type, ...data }); if (o.events.length > 200) o.events.shift(); sse(o); }
+loadOrders();
+function log(o, type, data = {}) { o.events.push({ t: now(), type, ...data }); if (o.events.length > 200) o.events.shift(); sse(o); saveOrders(); }
+function customerOrder(o) { return { id: o.id, number: o.number, status: o.status, table: o.table || '' }; }
+function boardOrder(o) { return { number: o.number, status: o.status, table: o.table || '', hot: !!(o.alert && o.alert.level === 2) }; }
 function publicOrder(o) {
   const streams = [...o.streams].map(s => ({ ageSec: Math.round((now() - s.startedAt) / 1000), blocked: s.blocked,
     lastDrainAgoSec: Math.round((now() - s.lastFlowAt) / 1000), sentSec: Math.round(s.framesSent * FRAME_SEC), ua: s.ua }));
@@ -129,7 +151,8 @@ function nextFrame(o, s) {
 setInterval(() => {
   const t = now();
   for (const o of orders.values()) for (const s of o.streams) {
-    if (o.status === 'picked') { s.res.end(); o.streams.delete(s); continue; }
+    // إيقاف البث عند التسليم، أو بعد دقيقة من تأكيد العميل، أو بعد ساعة انتظار، لتوفير البيانات والبطارية
+    if (o.status === 'picked' || (o.ackAt && t - o.ackAt > 60e3) || t - s.startedAt > STREAM_MAX_MIN * 60e3) { s.res.end(); o.streams.delete(s); log(o, 'stream_stopped', { why: o.status === 'picked' ? 'picked' : o.ackAt ? 'acked' : 'timeout' }); continue; }
     const due = Math.floor(((t - s.startedAt) / 1000 + PREBUFFER_SEC) / FRAME_SEC) + s.burstFrames - s.framesSent;
     if (s.blocked || due <= 0) continue;
     const chunk = []; for (let k = 0; k < Math.min(due, 200); k++) chunk.push(nextFrame(o, s));
@@ -213,19 +236,33 @@ function sse(o) { const set = sseClients.get(o.id); if (!set) return; const d = 
 // ---------- Actions ----------
 // عند الجاهزية: إشعار فوري ثم تكرار كل 12 ثانية حتى يستجيب العميل أو تمر 3 دقائق، فيهتز الجوال مع كل تكرار (أندرويد)
 function setReady(o, by) {
-  if (o.status !== 'waiting') return; o.status = 'ready'; o.readyAt = now(); log(o, 'ready', { by });
+  if (o.status !== 'waiting') return; o.status = 'ready'; o.readyAt = now(); o.ackAt = null; log(o, 'ready', { by });
   o.alert = { shown: false, seen: false, level: 0, note: '' };
   notifyAll(o);
-  const iv = setInterval(() => {
-    if (o.status !== 'ready' || o.ackAt || now() - o.readyAt > 180e3 || !readyTargets(o).length) return clearInterval(iv);
+  clearInterval(o.repeatTimer);
+  o.repeatTimer = setInterval(() => {
+    if (o.status !== 'ready' || o.ackAt || now() - o.readyAt > 180e3 || !readyTargets(o).length) return clearInterval(o.repeatTimer);
     notifyAll(o, true);
   }, 12000);
+}
+// تراجع الموظف عن "جاهز" خلال 20 ثانية: يتوقف الرنين، ويصل العميل إشعار تصحيح
+const UNDO_SEC = 20;
+async function undoReady(o) {
+  if (o.status !== 'ready' || now() - o.readyAt > UNDO_SEC * 1000) return false;
+  clearInterval(o.repeatTimer); o.status = 'waiting'; o.readyAt = null; o.alert = null; o.ackAt = null; o.repeats = 0;
+  for (const s of o.streams) { s.nextChimeAt = 0; s.chimeLogged = false; }
+  log(o, 'ready_undone');
+  const B = o.base || PUBLIC_URL;
+  for (const { sub } of readyTargets(o)) {
+    try { await pushTo(sub, { title: `تنبيه بالخطأ | طلب ${o.number}`, body: 'طلبك لسا قيد التحضير، بنبهك أول ما يجهز', tag: `order-${o.id}`, url: `${B}/o/${o.id}` }, B); } catch {}
+  }
+  return true;
 }
 // الإشارات التي تؤكد أن العميل استلم التنبيه أو رآه
 function markAlert(o, state) {
   if (!o.alert) return;
   if (state === 'sw_notification_shown') o.alert.shown = true;
-  if (['ready_page_visible', 'ready_screen_seen', 'audio_resumed_on_ready'].includes(state) || state.startsWith('visible')) o.alert.seen = true;
+  if (['ready_page_visible', 'ready_screen_seen'].includes(state) || state.startsWith('visible')) o.alert.seen = true;
 }
 function audioFlowing(o) { return [...o.streams].some(s => !s.blocked || now() - s.lastFlowAt < 8000); }
 function evalAlert(o) {
@@ -240,7 +277,17 @@ function evalAlert(o) {
   a.level = age > 15 ? 2 : 1; a.note = age > 15 ? 'لا يصل أي تنبيه للجوال. وجّهه لشاشة الطلبات أو الطاولة' : 'لم يتأكد وصول التنبيه بعد';
 }
 setInterval(() => { for (const o of orders.values()) evalAlert(o); }, 3000);
-function setPicked(o) { o.status = 'picked'; o.pickedAt = now(); log(o, 'picked'); }
+function setPicked(o) { clearInterval(o.repeatTimer); o.status = 'picked'; o.pickedAt = now(); log(o, 'picked'); }
+
+// ---------- Cashier auth ----------
+// لوحة الكاشير وأوامرها خلف رمز سري لكل مقهى (CASHIER_PIN). الرمز الافتراضي للتجربة فقط وتظهر اللوحة تحذيرا بتغييره.
+const CASHIER_PIN = String(process.env.CASHIER_PIN || '1234');
+const PIN_IS_DEFAULT = !process.env.CASHIER_PIN;
+const CASHIER_TOKEN = crypto.createHmac('sha256', vapid.privateKey).update('cashier:' + CASHIER_PIN).digest('base64url');
+const loginFails = new Map();          // ip -> { n, at }
+function clientIp(req) { return String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(); }
+function isCashier(req) { const m = String(req.headers.cookie || '').match(/(?:^|;\s*)tj_c=([\w-]+)/); return !!m && m[1].length === CASHIER_TOKEN.length && crypto.timingSafeEqual(Buffer.from(m[1]), Buffer.from(CASHIER_TOKEN)); }
+function sameStr(a, b) { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); }
 
 // ---------- HTTP ----------
 function send(res, code, body, type = 'text/html; charset=utf-8') { res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' }); res.end(body); }
@@ -252,10 +299,23 @@ const page = (name, base = PUBLIC_URL) => fs.readFileSync(path.join(__dirname, '
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v15', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v16', 'text/plain');
+    if (p === '/api/login' && req.method === 'POST') {
+      const ip = clientIp(req), f = loginFails.get(ip);
+      if (f && f.n >= 8 && now() - f.at < 15 * 60e3) return json(res, { error: 'locked', msg: 'محاولات كثيرة، حاول بعد ربع ساعة' }, 429);
+      const b = await readBody(req);
+      if (!sameStr(String(b.pin || '').trim(), CASHIER_PIN)) { loginFails.set(ip, { n: (f && now() - f.at < 15 * 60e3 ? f.n : 0) + 1, at: now() }); return json(res, { error: 'bad_pin' }, 401); }
+      loginFails.delete(ip);
+      const secure = /^https/.test(BASE) ? '; Secure' : '';
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': `tj_c=${CASHIER_TOKEN}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 60}${secure}`, 'Cache-Control': 'no-store' });
+      return res.end(JSON.stringify({ ok: true }));
+    }
+    if (p === '/api/logout' && req.method === 'POST') { res.writeHead(200, { 'Set-Cookie': 'tj_c=; Path=/; Max-Age=0' }); return res.end('{}'); }
+    if (p === '/api/me') return json(res, { cashier: isCashier(req), defaultPin: PIN_IS_DEFAULT });
+    if (p === '/api/board') return json(res, [...orders.values()].filter(o => o.status !== 'picked' && now() - o.createdAt < 3 * 3600e3).map(boardOrder));
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
-    if ((m = p.match(/^\/o\/([a-f0-9]+)$/))) {
+    if ((m = p.match(/^\/o\/([a-f0-9]{10,16})$/))) {
       const o = orders.get(m[1]);
       // طلب قديم أو منتهي، مثل فتح أيقونة الشاشة الرئيسية في زيارة جديدة: نعرض قائمة الطلبات الحالية
       if (!o || o.status === 'picked') { res.writeHead(302, { Location: '/c?app=1', 'Cache-Control': 'no-store' }); return res.end(); }
@@ -300,7 +360,7 @@ const server = http.createServer(async (req, res) => {
         catch (e) { out.push(e.statusCode || 0); devLog(d, 'test_error', { status: e.statusCode, msg: String(e.body || e.message).slice(0, 80) }); } }
       return json(res, { ok: out.every(c => c >= 200 && c < 300), status: out });
     }
-    if (p === '/api/devices' && req.method === 'GET') return json(res, [...devices.values()].map(d => ({ id: d.id, subs: d.subs.length, apple: d.subs.some(isApple), phoneTail: d.phone.slice(-4), ua: d.ua, lastTest: d.lastTest, log: (d.log || []).slice(-8) })));
+    if (p === '/api/devices' && req.method === 'GET') if (!isCashier(req)) return json(res, { error: 'auth' }, 401); else return json(res, [...devices.values()].map(d => ({ id: d.id, subs: d.subs.length, apple: d.subs.some(isApple), phoneTail: d.phone.slice(-4), ua: d.ua, lastTest: d.lastTest, log: (d.log || []).slice(-8) })));
     if (p === '/sticker') return send(res, 200, page('sticker.html', BASE));
     if ((m = p.match(/^\/events\/([a-f0-9]+)$/))) {
       const o = orders.get(m[1]); if (!o) return send(res, 404, '');
@@ -310,13 +370,17 @@ const server = http.createServer(async (req, res) => {
       req.on('close', () => { clearInterval(ka); sseClients.get(o.id)?.delete(res); }); return;
     }
     // API
+    if (p.startsWith('/api/orders') && req.method === 'GET' && !isCashier(req)) return json(res, { error: 'auth' }, 401);
     if (p === '/api/orders' && req.method === 'GET') return json(res, [...orders.values()].filter(o => now() - o.createdAt < 6 * 3600e3).reverse().map(publicOrder));
     if (p === '/api/open' && req.method === 'GET') return json(res, [...orders.values()].filter(o => o.status === 'waiting' && now() - o.createdAt < 30 * 60e3).reverse().map(o => ({ id: o.id, number: o.number })));
-    if (p === '/api/orders' && req.method === 'POST') { const b = await readBody(req); const o = newOrder(b.number, 'cashier', { phone: b.phone }); o.base = BASE; return json(res, publicOrder(o)); }
-    if ((m = p.match(/^\/api\/orders\/([a-f0-9]+)(?:\/(ready|picked|ack|push|apns|ping|test|phone|claim|table))?$/))) {
+    if (p === '/api/orders' && req.method === 'POST') { if (!isCashier(req)) return json(res, { error: 'auth' }, 401); const b = await readBody(req); const o = newOrder(b.number, 'cashier', { phone: b.phone }); o.base = BASE; return json(res, publicOrder(o)); }
+    if ((m = p.match(/^\/api\/orders\/([a-f0-9]+)(?:\/(ready|picked|ack|push|apns|ping|test|phone|claim|table|undo))?$/))) {
       const o = orders.get(m[1]); if (!o) return json(res, { error: 'not found' }, 404);
       const a = m[2]; const b = req.method === 'POST' ? await readBody(req) : {};
+      const cashier = isCashier(req);
+      if (['ready', 'picked', 'phone', 'undo'].includes(a) && !cashier) return json(res, { error: 'auth' }, 401);
       if (a === 'ready') setReady(o, 'cashier');
+      else if (a === 'undo') { if (!(await undoReady(o))) return json(res, { error: 'too_late' }, 409); }
       else if (a === 'picked') setPicked(o);
       else if (a === 'ack') { if (!o.ackAt) { o.ackAt = now(); log(o, 'customer_ack'); evalAlert(o); } }
       else if (a === 'push' && b.endpoint) { if (!o.push.some(s => s.endpoint === b.endpoint)) o.push.push(b); log(o, 'webpush_subscribed', { host: new URL(b.endpoint).host }); }
@@ -326,11 +390,12 @@ const server = http.createServer(async (req, res) => {
       else if (a === 'phone') { o.phone = normPhone(b.phone); log(o, 'phone_set', { tail: o.phone.slice(-4), linked: devicesForOrder(o).length }); }
       else if (a === 'table') { o.table = String(b.table || '').replace(/[^0-9A-Za-z\u0600-\u06FF ]/g, '').slice(0, 12); log(o, 'table_set', { table: o.table }); }
       else if (a === 'claim' && b.device && devices.has(String(b.device))) { o.devices.add(String(b.device)); log(o, 'device_claimed', { linked: devicesForOrder(o).length }); }
-      return json(res, publicOrder(o));
+      return json(res, cashier ? publicOrder(o) : customerOrder(o));
     }
     // تكامل Foodics (هيكل مبدئي): ينشئ الطلب عند وصول حدث إنشاء، ويعلن الجاهزية عند وصول حالة "منتهٍ".
     // أسماء الحقول تحتاج إلى مطابقة مع وثائق Foodics الرسمية قبل الإنتاج.
     if (p === '/webhooks/foodics' && req.method === 'POST') {
+      if (!process.env.FOODICS_SECRET || !sameStr(url.searchParams.get('key') || '', process.env.FOODICS_SECRET)) return json(res, { error: 'disabled_or_bad_key' }, 403);
       const b = await readBody(req); const ord = b.order || b.data?.order || b;
       const ref = String(ord.reference ?? ord.number ?? ord.id ?? '');
       let o = [...orders.values()].find(x => x.meta.foodicsRef === ref);

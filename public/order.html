@@ -202,7 +202,7 @@ player.addEventListener('error', () => { if (armed && status === 'waiting') { $(
 $('rearm').onclick = () => { startAudio().catch(()=>{}); };
 
 // ---------- شاشة التنبيه الكبيرة ----------
-let acked = false, buzzT = null, lock = null, titleT = null;
+let acked = false, wasReady = false, buzzT = null, lock = null, titleT = null;
 function haptic() { try { $('hl').click(); } catch(e) {} }   // اهتزاز خفيف في الايفون (يعمل والصفحة ظاهرة فقط)
 function buzz() {
   if (acked || status !== 'ready' || document.visibilityState !== 'visible') return;
@@ -229,11 +229,16 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 function render() {
   $('num').textContent = number; document.querySelectorAll('.n').forEach(x => x.textContent = number);
   if (status === 'ready') {
+    wasReady = true; acked = false;
     $('status').textContent = 'طلبك جاهز، تفضل بالاستلام';
     document.body.classList.add('ready'); $('ack').classList.remove('hidden'); $('arm').classList.add('hidden');
     api('ping', { state: 'ready_page_' + document.visibilityState }); showAlarm();
     // إذا كان تطبيق آخر (فيديو أو موسيقى) أوقف بثنا، نحاول استعادته لحظة الجاهزية (ينجح في Chrome أندرويد غالبا)
     if (armed && !APP && (player.paused || player.error)) startAudio().then(() => api('ping', { state: 'audio_resumed_on_ready' })).catch(() => api('ping', { state: 'audio_resume_failed' }));
+  } else if (status === 'waiting' && wasReady) {
+    // الموظف تراجع عن "جاهز" بالخطأ
+    stopAlarm(); acked = false; wasReady = false; $('ack').classList.add('hidden'); setMeta(false);
+    $('status').textContent = 'تنبيه بالخطأ، طلبك لسا قيد التحضير وبنبهك أول ما يجهز';
   } else if (status === 'picked') {
     stopAlarm(); ['ack','armed','paused','rearm','arm','heard','louder','tablecard'].forEach(x=>$(x).classList.add('hidden'));
     $('done').classList.remove('hidden'); $('status').textContent = 'تم التسليم'; stopAudio();

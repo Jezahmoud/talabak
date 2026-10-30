@@ -1,3 +1,4 @@
+require('./_auth');
 // يختبر إرسال الإشعارات إلى خدمة وهمية محلية: صيغة Apple التصريحية بترويستها الصحيحة، وصيغة أندرويد التقليدية، وربط الطلب بالجهاز عبر رقم الجوال
 const http = require('http'); const crypto = require('crypto'); const ece = require('http_ece');
 const B = 'http://localhost:3999';

@@ -1,7 +1,8 @@
+require('./_auth');
 // اختبار خادم: هل يحقن الخادم النغمة في البث الحي بعد إعلان الجاهزية؟ وكم التأخير؟
 const http = require('http'); const fs = require('fs'); const { execFileSync } = require('child_process');
 const B = 'http://localhost:3999';
-const post = p => new Promise(r => { const q = http.request(B + p, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, s => { let d = ''; s.on('data', c => d += c); s.on('end', () => r(JSON.parse(d))); }); q.end('{}'); });
+const post = p => fetch(B + p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
 (async () => {
   const o = await post('/api/orders'); const t0 = Date.now(); const chunks = []; let bytes = 0;
   http.get(`${B}/stream/${o.id}`, res => {
@@ -18,7 +19,7 @@ const post = p => new Promise(r => { const q = http.request(B + p, { method: 'PO
     const loud = rows.map(r => r > 1000 ? '#' : '.').join('');
     console.log('media timeline (each char = 0.1s):\n' + loud);
     const first = loud.indexOf('#', 40); console.log('chime onset in media timeline at', (first / 10).toFixed(1), 's');
-    const st = await new Promise(r => http.get(`${B}/api/orders`, s => { let d=''; s.on('data',c=>d+=c); s.on('end',()=>r(JSON.parse(d))); }));
+    const st = await (await fetch(B + '/api/orders')).json();
     console.log(st.find(x=>x.id===o.id).events.map(e=>e.type+(e.delayMs!=null?`(${e.delayMs}ms)`:'')).join(' > '));
     process.exit(0);
   }, 14000);

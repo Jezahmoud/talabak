@@ -1,3 +1,4 @@
+require('./_auth');
 // يختبر محرك التصعيد: طلب بلا أي قناة يصبح أحمر بعد 15 ث، وطلب يسحب البث يبقى أخضر، وطلب رآه العميل يصبح مؤكدا
 const B = 'http://localhost:3999';
 const post = (u, b) => fetch(B + u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) }).then(r => r.json());

@@ -11,3 +11,15 @@ services:
         value: مقهى التجربة
       - key: VAPID_SEED
         generateValue: true
+      # الرمز السري للوحة الكاشير. اكتب قيمته من لوحة Render (Environment) ولا تضعه هنا
+      - key: CASHIER_PIN
+        sync: false
+      # مفتاح استقبال أحداث Foodics (يبقى الربط معطلا حتى يضبط)
+      - key: FOODICS_SECRET
+        sync: false
+    # عند الترقية لخطة مدفوعة: أضف قرصا دائما واربطه بمجلد البيانات حتى لا تضيع الطلبات والجوالات المسجلة
+    # disk:
+    #   name: data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    # ثم أضف متغير DATA_DIR بقيمة /var/data

@@ -24,10 +24,26 @@
   .acts button { flex:1; }
   .r { background:var(--ok); color:#fff; } .p { background:#e9e5dd; color:#333; }
   .tl { font-size:14px; font-weight:700; margin:4px 0; } .tl.g { color:var(--ok); } .tl.y { color:var(--warn); } .tl.r { color:var(--bad); }
+  #login { position:fixed; inset:0; background:#f6f3ee; z-index:50; display:flex; align-items:center; justify-content:center; }
+  #login form { background:#fff; border-radius:20px; padding:28px; width:min(92vw,360px); display:grid; gap:12px; text-align:center; }
+  #login input { font:28px Tahoma; padding:12px; border:1px solid #ccc; border-radius:12px; text-align:center; letter-spacing:6px; direction:ltr; }
+  #offline { position:sticky; top:0; z-index:40; background:var(--bad); color:#fff; font-weight:800; text-align:center; padding:12px; }
+  #pinwarn { background:#fff1dc; color:#8a5a12; padding:10px 20px; font-size:14px; font-weight:700; }
+  .u { background:#fff; color:var(--bad); border:2px solid var(--bad); }
+  .hidden { display:none !important; }
   details { grid-column:1/-1; font-size:12px; color:var(--muted); } details pre { white-space:pre-wrap; margin:6px 0 0; direction:ltr; text-align:left; }
 </style>
 </head>
 <body>
+<div id="login" class="hidden"><form id="lf">
+  <h2 style="margin:0">لوحة الكاشير</h2>
+  <div style="color:var(--muted)">اكتب الرمز السري للمقهى</div>
+  <input id="pin" type="password" inputmode="numeric" autocomplete="current-password" required>
+  <button class="new" type="submit">دخول</button>
+  <div id="lerr" style="color:var(--bad);font-weight:700"></div>
+</form></div>
+<div id="offline" class="hidden">⚠️ انقطع الاتصال بالخادم. نادِ العملاء يدويا حتى يعود الاتصال</div>
+<div id="pinwarn" class="hidden">تنبيه: اللوحة تستخدم الرمز الافتراضي. غيّره من إعدادات الخادم (CASHIER_PIN) قبل التشغيل الفعلي.</div>
 <div class="top">
   <h1>{{CAFE}} — لوحة الكاشير</h1>
   <div class="cafeqr"><img src="/qr/cafe.svg" alt=""><div>رمز ثابت للمقهى<br>يختار منه العميل رقم طلبه</div></div>
@@ -36,11 +52,19 @@
   <a href="/board" target="_blank" style="font:700 15px Tahoma;color:#0f3d2e;padding:10px">شاشة الطلبات للكاونتر</a>
   <span style="display:inline-flex;gap:6px;align-items:center"><input id="phone" type="tel" placeholder="جوال العميل (اختياري)" style="font:16px Tahoma;padding:10px;border:1px solid #ccc;border-radius:10px;width:190px;direction:ltr"><button class="new" id="new">طلب جديد</button></span>
   <span id="devs" style="font:14px Tahoma;color:#5b6b64"></span>
+  <button class="p" id="logout" style="font-size:14px;padding:8px 12px">خروج</button>
 </div>
 <div class="list" id="list"></div>
 <script>
 const $ = s => document.getElementById(s);
-const post = (u, b) => fetch(u, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b||{}) }).then(r=>r.json());
+const post = (u, b) => fetch(u, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b||{}) }).then(r => { if (r.status === 401) showLogin(); return r.json(); });
+function showLogin() { $('login').classList.remove('hidden'); setTimeout(() => $('pin').focus(), 50); }
+$('lf').onsubmit = async e => { e.preventDefault(); $('lerr').textContent = '';
+  const r = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pin: $('pin').value }) });
+  if (r.ok) { $('login').classList.add('hidden'); $('pin').value = ''; boot(); }
+  else { const d = await r.json().catch(() => ({})); $('lerr').textContent = d.msg || 'الرمز غير صحيح'; } };
+$('logout').onclick = () => fetch('/api/logout', { method:'POST' }).then(() => location.reload());
+function esc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c])); }
 $('new').onclick = () => post('/api/orders', { phone: $('phone').value }).then(() => { $('phone').value = ''; load(); });
 const LBL = { waiting:'قيد التحضير', ready:'جاهز', picked:'تم التسليم' };
 function audioState(o) {
@@ -58,8 +82,8 @@ function alertLine(o) {
   return `<div class="tl ${cls}">${ico} ${a.note} (${age} ث)</div>`;
 }
 function reach(o) {
-  if (o.status === 'ready') return alertLine(o);
-  if (o.table) return `<div class="tl g">🪑 طاولة ${o.table}: وصّل الطلب للطاولة، لا يحتاج تنبيها</div>` + (o.status !== 'waiting' ? '' : '');
+  if (o.status === 'ready') return alertLine(o) + (o.table ? `<div class="tl g">🪑 طاولة ${esc(o.table)}</div>` : '');
+  if (o.table) return `<div class="tl g">🪑 طاولة ${esc(o.table)}: وصّل الطلب للطاولة، لا يحتاج تنبيها</div>`;
   if (o.status !== 'waiting') return '';
   const live = o.streams.some(s => !(s.blocked && s.lastDrainAgoSec > 8));
   if (o.linkedDevices || o.pushCount) return '<div class="tl g">🟢 يرن ويهتز حتى والجوال مقفل</div>';
@@ -78,6 +102,7 @@ function card(o) {
         ${o.reactionSec != null ? `<br>استجاب العميل بعد <span class="g">${o.reactionSec} ث</span> من إعلان الجاهزية` : ''}</div></div>
     <div class="acts">
       ${o.status==='waiting' ? `<button class="r" onclick="post('/api/orders/${o.id}/ready').then(load)">جاهز</button>` : ''}
+      ${o.status==='ready' && Date.now() - o.readyAt < 20000 ? `<button class="u" onclick="post('/api/orders/${o.id}/undo').then(load)">تراجع (ضغطته بالغلط)</button>` : ''}
       ${o.status!=='picked' && !o.table ? `<button class="p" onclick="const t=prompt('رقم الطاولة'); if(t) post('/api/orders/${o.id}/table',{table:t}).then(load)">طاولة</button>` : ''}
       ${o.status!=='picked' ? `<button class="p" onclick="post('/api/orders/${o.id}/picked').then(load)">تم التسليم</button>` : ''}
     </div>
@@ -85,17 +110,27 @@ function card(o) {
   </div>`;
 }
 let openDetails = new Set();
+let fails = 0;
 async function load() {
   document.querySelectorAll('details[open]').forEach(d => openDetails.add(d.parentElement.querySelector('a').href));
-  const l = await fetch('/api/orders').then(r=>r.json());
+  let l;
+  try { const r = await fetch('/api/orders', { cache: 'no-store' }); if (r.status === 401) { showLogin(); return; } l = await r.json(); fails = 0; $('offline').classList.add('hidden'); }
+  catch { if (++fails >= 2) $('offline').classList.remove('hidden'); return; }
   $('list').innerHTML = l.map(card).join('');
   document.querySelectorAll('.card').forEach(c => { if (openDetails.has(c.querySelector('a').href)) c.querySelector('details').open = true; });
   openDetails = new Set();
 }
 const TR = { ok: 'وصل بصوت أو اهتزاز ✅', silent: 'وصل بدون صوت', none: 'ما وصل' };
-async function loadDevs() { try { const d = await fetch('/api/devices').then(r=>r.json());
+async function loadDevs() { try { const r = await fetch('/api/devices'); if (!r.ok) return; const d = await r.json();
   $('devs').innerHTML = `جوالات مسجلة: <b>${d.filter(x=>x.subs).length}</b>` + d.map(x => `<br>${x.apple ? 'ايفون' : 'أندرويد'} ${x.phoneTail ? '…' + x.phoneTail : 'بدون رقم'} · ${x.subs ? 'مشترك' : 'غير مشترك'} · ${x.log.some(e=>e.state==='sw_notification_shown') ? 'عرض الإشعار ✅' : ''} ${x.lastTest ? '· رأي العميل: ' + (TR[x.lastTest] || x.lastTest) : ''}`).join(''); } catch {} }
-load(); setInterval(load, 1500); loadDevs(); setInterval(loadDevs, 5000);
+let timers = [];
+async function boot() {
+  const me = await fetch('/api/me').then(r => r.json()).catch(() => ({}));
+  if (!me.cashier) return showLogin();
+  $('pinwarn').classList.toggle('hidden', !me.defaultPin);
+  timers.forEach(clearInterval); load(); loadDevs(); timers = [setInterval(load, 1500), setInterval(loadDevs, 5000)];
+}
+boot();
 </script>
 </body>
 </html>

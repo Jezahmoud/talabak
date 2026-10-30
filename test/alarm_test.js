@@ -1,3 +1,4 @@
+require('./_auth');
 const { chromium, devices } = require('playwright');
 (async () => {
   const B='http://localhost:3999';

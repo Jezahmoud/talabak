@@ -1,3 +1,4 @@
+require('./_auth');
 // اختبار متصفح آلي (Chromium): تفعيل التنبيه، التحقق من تشغيل البث، ووصول حالة الجاهزية للصفحة
 const { chromium } = require('playwright');
 const B = 'http://localhost:3999';

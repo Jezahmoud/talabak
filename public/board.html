@@ -24,6 +24,7 @@
 </head>
 <body>
 <header><b>{{CAFE}}</b><span>طلبك جاهز؟ رقمك بيظهر هنا بالأخضر</span></header>
+<div id="off" style="display:none;background:#a32020;color:#fff;text-align:center;padding:10px;font-weight:800">انقطع الاتصال، الأرقام قد لا تكون محدثة</div>
 <main>
   <section class="ready"><h2>جاهز الآن</h2><div class="grid" id="ready"><div class="empty">لا توجد طلبات جاهزة</div></div></section>
   <section class="wait"><h2>قيد التحضير</h2><div class="grid" id="wait"><div class="empty">—</div></div></section>
@@ -32,11 +33,11 @@
 <script>
 async function load() {
   try {
-    const l = await (await fetch('/api/orders')).json();
+    const l = await (await fetch('/api/board', { cache: 'no-store' })).json(); document.getElementById('off').style.display = 'none';
     const ready = l.filter(o => o.status === 'ready' && !o.table), wait = l.filter(o => o.status === 'waiting' && !o.table);
-    document.getElementById('ready').innerHTML = ready.length ? ready.map(o => `<div class="n${o.alert && o.alert.level === 2 ? ' hot' : ''}">${o.number}</div>`).join('') : '<div class="empty">لا توجد طلبات جاهزة</div>';
+    document.getElementById('ready').innerHTML = ready.length ? ready.map(o => `<div class="n${o.hot ? ' hot' : ''}">${o.number}</div>`).join('') : '<div class="empty">لا توجد طلبات جاهزة</div>';
     document.getElementById('wait').innerHTML = wait.length ? wait.map(o => `<div class="n">${o.number}</div>`).join('') : '<div class="empty">—</div>';
-  } catch {}
+  } catch { document.getElementById('off').style.display = 'block'; }
 }
 load(); setInterval(load, 2000);
 // تبقى الشاشة شغالة إذا كانت على جهاز لوحي
