@@ -52,7 +52,7 @@ function card(o) {
     <a href="/o/${o.id}" target="_blank"><img src="/qr/${o.id}.svg" alt=""></a>
     <div><div><span class="n">${o.number}</span><span class="st ${o.status}">${LBL[o.status]}</span></div>
       <div class="ch">${t} · ${audioState(o)}<br>
-        اهتزاز: ${o.pushCount ? `<span class="g">مفعل${o.pushApple ? ' (ايفون)' : ''}</span>` : 'لا'} · App Clip: ${o.apnsCount ? '<span class="g">مسجل</span>' : 'لا'}
+        الصوت: ${o.heard ? '<span class="g">العميل أكد أنه سمع</span>' : '<span class="w">لم يؤكد</span>'} · اهتزاز: ${o.pushCount ? `<span class="g">مفعل${o.pushApple ? ' (ايفون)' : ''}</span>` : 'لا'} · App Clip: ${o.apnsCount ? '<span class="g">مسجل</span>' : 'لا'}
         ${o.reactionSec != null ? `<br>استجاب العميل بعد <span class="g">${o.reactionSec} ث</span> من إعلان الجاهزية` : ''}</div></div>
     <div class="acts">
       ${o.status==='waiting' ? `<button class="r" onclick="post('/api/orders/${o.id}/ready').then(load)">جاهز</button>` : ''}

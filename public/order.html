@@ -29,6 +29,21 @@
   body.ready { animation: flash 1s infinite; }
   body.ready .num { background:var(--ok); color:#fff; } body.ready .num small { color:#e6fff0; }
   @keyframes flash { 0%,100% { background:var(--bg);} 50% { background:#c9f2d8; } }
+  #alarm { position:fixed; inset:0; z-index:99; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; color:#fff; text-align:center;
+    background:#0b7a3e; animation: alarmbg 1.2s ease-in-out infinite; padding:24px; }
+  @keyframes alarmbg { 0%,100% { background:#0b7a3e; } 50% { background:#16a34a; } }
+  #alarm h1 { font-size:54px; margin:6px 0 0; line-height:1.15; animation: pop .6s ease-in-out infinite alternate; }
+  #alarm .bn { font-size:96px; font-weight:900; color:#ffe14d; line-height:1; font-variant-numeric:tabular-nums; }
+  #alarm p { font-size:22px; margin:0 0 10px; color:#eafff1; }
+  #alarm button { background:#fff; color:#0b7a3e; border:0; border-radius:18px; padding:20px 26px; font-family:inherit; font-size:24px; font-weight:800; width:100%; max-width:420px; }
+  .rip { position:relative; width:190px; height:190px; display:flex; align-items:center; justify-content:center; }
+  .rip i { position:absolute; inset:0; border-radius:50%; border:6px solid #ffe14d; opacity:0; animation: ring 2.1s ease-out infinite; }
+  .rip i:nth-child(2) { animation-delay:.7s; } .rip i:nth-child(3) { animation-delay:1.4s; }
+  @keyframes ring { 0% { transform:scale(.45); opacity:1; } 100% { transform:scale(1.6); opacity:0; } }
+  .rip b { font-size:96px; animation: shake .5s ease-in-out infinite; display:block; }
+  @keyframes shake { 0%,100% { transform:rotate(0); } 25% { transform:rotate(-22deg); } 75% { transform:rotate(22deg); } }
+  @keyframes pop { from { transform:scale(1); } to { transform:scale(1.08); } }
+  body.alarming { overflow:hidden; }
   footer { text-align:center; color:var(--muted); font-size:12px; padding:10px; }
 </style>
 </head>
@@ -40,26 +55,17 @@
   <button class="big" id="arm">نبهني عند جاهزية طلبي</button>
 
   <div class="note ok hidden" id="armed">
-    التنبيه مفعل. يمكنك قفل الشاشة ووضع الجوال في جيبك، وسيرن الجوال عند جاهزية طلبك.
+    ✅ التنبيه مفعل. اقفل الشاشة وحط الجوال في جيبك، وبيرن جوالك أول ما يجهز طلبك حتى لو كان على الصامت.
   </div>
   <div class="note hidden" id="heard">
-    <b>هل سمعت نغمة التجربة بوضوح؟</b>
+    <b style="font-size:19px">خطوة أخيرة: هل سمعت نغمة التجربة؟</b><br><span style="color:var(--muted)">التنبيه ما يكتمل إلا بعد ما تسمعها، عشان نضمن إنك تسمعه وقت ما يجهز طلبك.</span>
     <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="big" id="yes" style="padding:14px">نعم</button>
-      <button class="big ghost" id="no" style="padding:14px">لا، أعدها</button>
+      <button class="big" id="yes" style="padding:14px">سمعتها</button>
+      <button class="big ghost" id="no" style="padding:14px">ما سمعت، أعدها</button>
     </div>
   </div>
   <div class="note warn hidden" id="louder">
-    ارفع الصوت الآن من الأزرار الجانبية للجوال، ثم اضغط «لا، أعدها» مرة أخرى حتى تسمعها بوضوح.
-    <br>الصوت الذي يتحكم في التنبيه هو صوت الوسائط، وليس صوت الرنين.
-  </div>
-  <div class="note warn hidden" id="vib">
-    <b>عندك «طلبك جاهز» على الشاشة الرئيسية؟</b> افتحه واضغط رقم طلبك <b class="n"></b> ثم «نبهني».<br><br>
-    <b>تبي جوالك يهتز حتى لو الصوت مقفول؟</b><br>
-    مرة وحدة فقط وتنفع في كل زيارة:<br>
-    ١. اضغط زر المشاركة في Safari (وإذا ما لقيته اضغط النقاط الثلاث ثم مشاركة)<br>
-    ٢. اختر «إضافة إلى الشاشة الرئيسية» ثم «إضافة»<br>
-    ٣. افتح «طلبك جاهز» من الشاشة الرئيسية، بيفتح على طلبك نفسه، اضغط «نبهني» ووافق على الإشعارات
+    🔊 ارفع الصوت من الزر الجانبي للجوال الحين، النغمة تتكرر لين تسمعها ثم اضغط «سمعتها».
   </div>
   <div class="note warn hidden" id="paused">
     توقف التنبيه الصوتي. اضغط الزر أدناه لإعادة تفعيله.
@@ -68,7 +74,15 @@
   <button class="big hidden" id="ack">أنا في الطريق لاستلامه</button>
   <div class="note hidden" id="done">تم تسليم الطلب. بالعافية.<br><a href="/c?app=1" style="color:#0f3d2e;font-weight:700">طلب جديد؟ اختر رقمك من هنا</a></div>
 </main>
-<footer>لا يحتاج تطبيقا ولا تسجيلا. يعمل التنبيه والشاشة مقفلة، ما لم تغلق هذه الصفحة أو تشغل موسيقى أو فيديو.</footer>
+<div id="alarm" class="hidden" role="alert">
+  <div class="rip"><i></i><i></i><i></i><b>🔔</b></div>
+  <h1>طلبك جاهز</h1>
+  <div class="bn n"></div>
+  <p>تفضل بالاستلام من الكاشير</p>
+  <button id="ack2">أنا في الطريق</button>
+</div>
+<label id="hl" aria-hidden="true" style="position:fixed;top:0;left:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none"><input type="checkbox" switch id="hs"></label>
+<footer>بدون تطبيق ولا تسجيل. يرن والشاشة مقفلة، ما لم تقفل هذه الصفحة أو تشغل مقطع أو موسيقى.</footer>
 <audio id="player" preload="none" playsinline></audio>
 <script>
 const id = location.pathname.split('/').pop();
@@ -90,10 +104,16 @@ function startAudio() {
   try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch(e){}
   player.src = `/stream/${id}?t=${Date.now()}`;
   const p = player.play();
-  if ('mediaSession' in navigator) {
-    navigator.mediaSession.metadata = new MediaMetadata({ title: `طلب رقم ${number}`, artist: '{{CAFE}}', album: 'سيرن الجوال عند الجاهزية' });
-  }
+  setMeta(status === 'ready');
   return p;
+}
+// ما يظهر على شاشة القفل في بطاقة التشغيل: صورة كبيرة وعنوان واضح
+function setMeta(ready) {
+  if (!('mediaSession' in navigator)) return;
+  try { navigator.mediaSession.metadata = ready
+    ? new MediaMetadata({ title: `🔔 طلبك جاهز | رقم ${number}`, artist: 'تفضل بالاستلام من الكاشير', album: '{{CAFE}}', artwork: [{ src: '/ready-art.png', sizes: '1024x1024', type: 'image/png' }] })
+    : new MediaMetadata({ title: `طلب رقم ${number}`, artist: 'بانتظار طلبك، بيرن جوالك أول ما يجهز', album: '{{CAFE}}', artwork: [{ src: '/wait-art.png', sizes: '1024x1024', type: 'image/png' }] });
+  } catch(e) {}
 }
 function stopAudio() { player.pause(); player.removeAttribute('src'); player.load(); }
 
@@ -127,14 +147,16 @@ $('arm').onclick = async () => {
   // في الوضع التلقائي: إذا قبل العميل الإشعارات (أندرويد غالبا) نوقف البث بعد نغمة التجربة لتوفير البطارية وعدم مزاحمة موسيقاه
   // البث الصوتي يبقى شغالا على كل الأجهزة، والإشعار قناة إضافية فوقه (أندرويد)
   armed = true;
-  $('arm').classList.add('hidden'); $('armed').classList.remove('hidden'); $('heard').classList.remove('hidden');
-  // ملاحظة: إشعارات تطبيقات الويب في الايفون تصل صامتة بلا صوت ولا اهتزاز (قيد من Apple)، فلا نوجه العميل لإضافة الصفحة للشاشة الرئيسية
-  if (pushOn && !IOS) $('armed').textContent = 'التنبيه مفعل بالصوت والإشعار. اقفل الشاشة وحط الجوال في جيبك.';
+  // التفعيل لا يكتمل إلا بعد أن يؤكد العميل أنه سمع نغمة التجربة
+  $('arm').classList.add('hidden'); $('heard').classList.remove('hidden');
+  if (pushOn && !IOS) $('armed').textContent = '✅ التنبيه مفعل بالصوت والاهتزاز والإشعار. اقفل الشاشة وحط الجوال في جيبك.';
   api('ping', { state: `armed audio=${wantAudio} push=${pushOn} ios=${IOS} app=${STANDALONE}` });
 };
-$('yes').onclick = () => { $('heard').classList.add('hidden'); $('louder').classList.add('hidden'); api('ping', { state:'heard_yes' }); };
+let retest = null;
+$('yes').onclick = () => { clearInterval(retest); $('heard').classList.add('hidden'); $('louder').classList.add('hidden'); $('armed').classList.remove('hidden'); haptic(); api('ping', { state:'heard_yes' }); };
 $('no').onclick = () => { $('louder').classList.remove('hidden'); api('test'); api('ping', { state:'heard_no' });
-  if (player.paused) startAudio().catch(()=>{}); };
+  if (player.paused) startAudio().catch(()=>{});
+  clearInterval(retest); let n = 0; retest = setInterval(() => { if (++n > 12) return clearInterval(retest); api('test'); }, 4500); };   // تتكرر النغمة لين يسمعها
 // إذا انقطع البث (تبدل الشبكة مثلا) نعيد الاتصال تلقائيا متى أمكن
 function retry() { if (armed && status === 'waiting' && (player.paused || player.error)) startAudio().catch(()=>{}); }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') retry(); });
@@ -146,16 +168,39 @@ player.addEventListener('playing', () => { $('paused').classList.add('hidden'); 
 player.addEventListener('error', () => { if (armed && status === 'waiting') { $('paused').classList.remove('hidden'); $('rearm').classList.remove('hidden'); api('ping', { state:'audio_error' }); } });
 $('rearm').onclick = () => { startAudio().catch(()=>{}); };
 
-$('ack').onclick = () => { api('ack'); $('ack').classList.add('hidden'); document.body.classList.remove('ready'); $('status').textContent = 'بانتظارك عند الكاشير'; };
+// ---------- شاشة التنبيه الكبيرة ----------
+let acked = false, buzzT = null, lock = null, titleT = null;
+function haptic() { try { $('hl').click(); } catch(e) {} }   // اهتزاز خفيف في الايفون (يعمل والصفحة ظاهرة فقط)
+function buzz() {
+  if (acked || status !== 'ready' || document.visibilityState !== 'visible') return;
+  if (navigator.vibrate) navigator.vibrate([600,200,600,200,1200]);
+  else { haptic(); setTimeout(haptic, 180); setTimeout(haptic, 360); }
+}
+async function keepScreenOn() { try { if ('wakeLock' in navigator && !lock) { lock = await navigator.wakeLock.request('screen'); lock.addEventListener('release', () => lock = null); } } catch(e) {} }
+function showAlarm() {
+  if (acked) return;
+  $('alarm').classList.remove('hidden'); document.body.classList.add('alarming');
+  setMeta(true); keepScreenOn(); buzz(); clearInterval(buzzT); buzzT = setInterval(buzz, 2600);
+  clearInterval(titleT); let f = 0; titleT = setInterval(() => document.title = (f ^= 1) ? '🔔 طلبك جاهز' : `رقم ${number}`, 900);
+}
+function stopAlarm() {
+  acked = true; clearInterval(buzzT); clearInterval(titleT); document.title = 'طلبك جاهز';
+  $('alarm').classList.add('hidden'); document.body.classList.remove('alarming', 'ready');
+  try { lock && lock.release(); } catch(e) {}
+  if (navigator.vibrate) navigator.vibrate(0);
+}
+function ackNow() { api('ack'); stopAlarm(); $('ack').classList.add('hidden'); $('status').textContent = 'بانتظارك عند الكاشير'; }
+$('ack').onclick = ackNow; $('ack2').onclick = ackNow;
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && status === 'ready' && !acked) { api('ping', { state:'ready_screen_seen' }); showAlarm(); } });
 
 function render() {
   $('num').textContent = number; document.querySelectorAll('.n').forEach(x => x.textContent = number);
   if (status === 'ready') {
     $('status').textContent = 'طلبك جاهز، تفضل بالاستلام';
     document.body.classList.add('ready'); $('ack').classList.remove('hidden'); $('arm').classList.add('hidden');
-    if (navigator.vibrate) navigator.vibrate([400,200,400,200,800]);
+    api('ping', { state: 'ready_page_' + document.visibilityState }); showAlarm();
   } else if (status === 'picked') {
-    document.body.classList.remove('ready'); ['ack','armed','paused','rearm','arm'].forEach(x=>$(x).classList.add('hidden'));
+    stopAlarm(); ['ack','armed','paused','rearm','arm','heard','louder'].forEach(x=>$(x).classList.add('hidden'));
     $('done').classList.remove('hidden'); $('status').textContent = 'تم التسليم'; stopAudio();
   }
 }

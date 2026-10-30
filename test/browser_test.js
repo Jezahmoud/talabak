@@ -17,7 +17,7 @@ const B = 'http://localhost:3999';
   await fetch(`${B}/api/orders/${o.id}/ready`, { method: 'POST' });
   await page.waitForTimeout(1500);
   console.log('page status text:', await page.textContent('#status'), '| ready class:', await page.evaluate(() => document.body.classList.contains('ready')));
-  await page.click('#ack');
+  await page.click('#ack2');
   st = (await (await fetch(B + '/api/orders')).json()).find(x => x.id === o.id);
   console.log('reactionSec:', st.reactionSec, '\nevents:', st.events.map(e => e.type + (e.state ? `[${e.state}]` : '') + (e.status ? `[${e.status}]` : '') + (e.msg ? `[${e.msg.slice(0,60)}]` : '')).join(' > '));
   await page.screenshot({ path: '/tmp/order_ready.png' });

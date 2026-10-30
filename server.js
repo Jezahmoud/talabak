@@ -78,7 +78,7 @@ function publicOrder(o) {
   const streams = [...o.streams].map(s => ({ ageSec: Math.round((now() - s.startedAt) / 1000), blocked: s.blocked,
     lastDrainAgoSec: Math.round((now() - s.lastFlowAt) / 1000), sentSec: Math.round(s.framesSent * FRAME_SEC), ua: s.ua }));
   return { id: o.id, number: o.number, status: o.status, createdAt: o.createdAt, readyAt: o.readyAt, ackAt: o.ackAt, pickedAt: o.pickedAt,
-    pushCount: o.push.length, pushApple: o.push.filter(x => String(x.endpoint).includes('push.apple.com')).length, apnsCount: o.apns.length, streams, events: o.events.slice(-12),
+    heard: !!o.heard, pushCount: o.push.length, pushApple: o.push.filter(x => String(x.endpoint).includes('push.apple.com')).length, apnsCount: o.apns.length, streams, events: o.events.slice(-12),
     reactionSec: o.readyAt && o.ackAt ? Math.round((o.ackAt - o.readyAt) / 100) / 10 : null };
 }
 
@@ -129,7 +129,9 @@ async function notifyAll(o, repeat = false) {
     // ايفون قد يستبدل الإشعار ذا الوسم نفسه بصمت، فنعطي كل تكرار وسما جديدا ليهتز من جديد
     const apple = String(sub.endpoint).includes('push.apple.com');
     const tag = repeat ? `order-${o.id}-${Date.now()}` : `order-${o.id}`;
-    const payload = JSON.stringify({ title: `${CAFE_NAME}`, body: `طلبك رقم ${o.number} جاهز، تفضل بالاستلام`, tag, url: `${o.base || PUBLIC_URL}/o/${o.id}` });
+    const B = o.base || PUBLIC_URL;
+    const payload = JSON.stringify({ title: `🔔 طلبك جاهز | رقم ${o.number}`, body: `تفضل بالاستلام من ${CAFE_NAME}`, tag, url: `${B}/o/${o.id}`,
+      image: `${B}/ready-banner.png`, icon: `${B}/icon-192.png`, badge: `${B}/badge.png` });
     try { const r = await webpush.sendNotification(sub, payload, { TTL: 600, urgency: 'high' }); log(o, 'webpush_sent', { status: r.statusCode }); }
     catch (e) { log(o, 'webpush_error', { status: e.statusCode, msg: String(e.body || e.message).slice(0, 120) }); }
   }
@@ -185,7 +187,7 @@ const page = (name, base = PUBLIC_URL) => fs.readFileSync(path.join(__dirname, '
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v7', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v8', 'text/plain');
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
     if ((m = p.match(/^\/o\/([a-f0-9]+)$/))) {
@@ -207,6 +209,7 @@ const server = http.createServer(async (req, res) => {
       id: '/', name: 'طلبك جاهز', short_name: 'طلبك جاهز', lang: 'ar', dir: 'rtl', display: 'standalone', start_url: /^[a-f0-9]+$/.test(url.searchParams.get('o') || '') ? `/o/${url.searchParams.get('o')}?app=1` : '/c?app=1', scope: '/',
       background_color: '#f6f3ee', theme_color: '#0f3d2e',
       icons: [192, 512].map(n => ({ src: `/icon-${n}.png`, sizes: `${n}x${n}`, type: 'image/png', purpose: 'any' })) }), 'application/manifest+json');
+    if ((m = p.match(/^\/(ready-banner|ready-art|wait-art|badge)\.png$/))) { res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' }); return res.end(fs.readFileSync(path.join(__dirname, `assets/${m[1]}.png`))); }
     if ((m = p.match(/^\/(?:apple-touch-icon|icon-(180|192|512))(?:-precomposed)?\.png$/))) return send(res, 200, fs.readFileSync(path.join(__dirname, `assets/icon-${m[1] || 180}.png`)), 'image/png');
     if (p === '/sticker') return send(res, 200, page('sticker.html', BASE));
     if ((m = p.match(/^\/events\/([a-f0-9]+)$/))) {
@@ -228,7 +231,7 @@ const server = http.createServer(async (req, res) => {
       else if (a === 'ack') { if (!o.ackAt) { o.ackAt = now(); log(o, 'customer_ack'); } }
       else if (a === 'push' && b.endpoint) { if (!o.push.some(s => s.endpoint === b.endpoint)) o.push.push(b); log(o, 'webpush_subscribed', { host: new URL(b.endpoint).host }); }
       else if (a === 'apns' && b.token) { if (!o.apns.includes(b.token)) o.apns.push(b.token); log(o, 'apns_registered'); }
-      else if (a === 'ping') log(o, 'page', { state: String(b.state || '').slice(0, 80) });
+      else if (a === 'ping') { const st = String(b.state || '').slice(0, 80); if (st === 'heard_yes') o.heard = true; log(o, 'page', { state: st }); }
       else if (a === 'test') { for (const st of o.streams) st.testTone = true; log(o, 'test_tone'); }
       return json(res, publicOrder(o));
     }
