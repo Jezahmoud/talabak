@@ -195,7 +195,9 @@ window.addEventListener('online', retry);
 player.addEventListener('stalled', () => setTimeout(retry, 3000));
 
 player.addEventListener('pause', () => { if (armed && status === 'waiting' && player.getAttribute('src')) { $('paused').classList.remove('hidden'); $('rearm').classList.remove('hidden'); api('ping', { state:'audio_paused' }); } });
-player.addEventListener('playing', () => { $('paused').classList.add('hidden'); $('rearm').classList.add('hidden'); });
+let wasPaused = false;
+player.addEventListener('pause', () => { wasPaused = true; });
+player.addEventListener('playing', () => { $('paused').classList.add('hidden'); $('rearm').classList.add('hidden'); if (wasPaused) { wasPaused = false; api('ping', { state: 'audio_resumed' }); } });
 player.addEventListener('error', () => { if (armed && status === 'waiting') { $('paused').classList.remove('hidden'); $('rearm').classList.remove('hidden'); api('ping', { state:'audio_error' }); } });
 $('rearm').onclick = () => { startAudio().catch(()=>{}); };
 

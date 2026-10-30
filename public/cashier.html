@@ -50,7 +50,15 @@ function audioState(o) {
     : `<span class="g">الجهاز يسحب البث الصوتي</span> (${s.ageSec} ث)`).join('<br>');
 }
 // إشارة مرور: هل يمكن الوصول لجوال العميل الآن؟ تحسم قبل أن يبتعد عن الكاشير
+function alertLine(o) {
+  if (o.status !== 'ready' || !o.alert) return '';
+  const a = o.alert, age = Math.round((Date.now() - o.readyAt) / 1000);
+  const cls = a.level === -1 ? 'g' : a.level === 2 ? 'r' : a.level === 1 ? 'y' : 'g';
+  const ico = a.level === -1 ? '✅' : a.level === 2 ? '🔴' : a.level === 1 ? '⏳' : '🔔';
+  return `<div class="tl ${cls}">${ico} ${a.note} (${age} ث)</div>`;
+}
 function reach(o) {
+  if (o.status === 'ready') return alertLine(o);
   if (o.table) return `<div class="tl g">🪑 طاولة ${o.table}: وصّل الطلب للطاولة، لا يحتاج تنبيها</div>` + (o.status !== 'waiting' ? '' : '');
   if (o.status !== 'waiting') return '';
   const live = o.streams.some(s => !(s.blocked && s.lastDrainAgoSec > 8));

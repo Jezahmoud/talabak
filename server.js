@@ -94,7 +94,7 @@ function publicOrder(o) {
   const streams = [...o.streams].map(s => ({ ageSec: Math.round((now() - s.startedAt) / 1000), blocked: s.blocked,
     lastDrainAgoSec: Math.round((now() - s.lastFlowAt) / 1000), sentSec: Math.round(s.framesSent * FRAME_SEC), ua: s.ua }));
   return { id: o.id, number: o.number, status: o.status, createdAt: o.createdAt, readyAt: o.readyAt, ackAt: o.ackAt, pickedAt: o.pickedAt,
-    phoneTail: o.phone ? o.phone.slice(-4) : '', linkedDevices: devicesForOrder(o).length, table: o.table || '',
+    phoneTail: o.phone ? o.phone.slice(-4) : '', linkedDevices: devicesForOrder(o).length, table: o.table || '', alert: o.alert || null,
     heard: !!o.heard, pushCount: o.push.length, pushApple: o.push.filter(x => String(x.endpoint).includes('push.apple.com')).length, apnsCount: o.apns.length, streams, events: o.events.slice(-12),
     reactionSec: o.readyAt && o.ackAt ? Math.round((o.ackAt - o.readyAt) / 100) / 10 : null };
 }
@@ -213,12 +213,33 @@ function sse(o) { const set = sseClients.get(o.id); if (!set) return; const d = 
 // ---------- Actions ----------
 // عند الجاهزية: إشعار فوري ثم تكرار كل 12 ثانية حتى يستجيب العميل أو تمر 3 دقائق، فيهتز الجوال مع كل تكرار (أندرويد)
 function setReady(o, by) {
-  if (o.status !== 'waiting') return; o.status = 'ready'; o.readyAt = now(); log(o, 'ready', { by }); notifyAll(o);
+  if (o.status !== 'waiting') return; o.status = 'ready'; o.readyAt = now(); log(o, 'ready', { by });
+  o.alert = { shown: false, seen: false, level: 0, note: '' };
+  notifyAll(o);
   const iv = setInterval(() => {
     if (o.status !== 'ready' || o.ackAt || now() - o.readyAt > 180e3 || !readyTargets(o).length) return clearInterval(iv);
     notifyAll(o, true);
   }, 12000);
 }
+// الإشارات التي تؤكد أن العميل استلم التنبيه أو رآه
+function markAlert(o, state) {
+  if (!o.alert) return;
+  if (state === 'sw_notification_shown') o.alert.shown = true;
+  if (['ready_page_visible', 'ready_screen_seen', 'audio_resumed_on_ready'].includes(state) || state.startsWith('visible')) o.alert.seen = true;
+}
+function audioFlowing(o) { return [...o.streams].some(s => !s.blocked || now() - s.lastFlowAt < 8000); }
+function evalAlert(o) {
+  if (o.status !== 'ready' || !o.alert) return;
+  const age = (now() - o.readyAt) / 1000, a = o.alert;
+  if (o.ackAt || a.seen) { a.level = -1; a.note = 'العميل شاف التنبيه'; return; }
+  const chan = [];
+  if (audioFlowing(o)) chan.push('الجوال يستقبل نغمة الرنين');
+  if (a.shown) chan.push('الإشعار ظهر على الجوال');
+  else if (readyTargets(o).some(t => isApple(t.sub))) chan.push('أُرسل إشعار للايفون');
+  if (chan.length) { a.level = age > 60 ? 1 : 0; a.note = chan.join(' و') + (age > 60 ? '، لكنه لم يستجب بعد' : ''); return; }
+  a.level = age > 15 ? 2 : 1; a.note = age > 15 ? 'لا يصل أي تنبيه للجوال. وجّهه لشاشة الطلبات أو الطاولة' : 'لم يتأكد وصول التنبيه بعد';
+}
+setInterval(() => { for (const o of orders.values()) evalAlert(o); }, 3000);
 function setPicked(o) { o.status = 'picked'; o.pickedAt = now(); log(o, 'picked'); }
 
 // ---------- HTTP ----------
@@ -231,7 +252,7 @@ const page = (name, base = PUBLIC_URL) => fs.readFileSync(path.join(__dirname, '
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v14', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v15', 'text/plain');
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
     if ((m = p.match(/^\/o\/([a-f0-9]+)$/))) {
@@ -297,10 +318,10 @@ const server = http.createServer(async (req, res) => {
       const a = m[2]; const b = req.method === 'POST' ? await readBody(req) : {};
       if (a === 'ready') setReady(o, 'cashier');
       else if (a === 'picked') setPicked(o);
-      else if (a === 'ack') { if (!o.ackAt) { o.ackAt = now(); log(o, 'customer_ack'); } }
+      else if (a === 'ack') { if (!o.ackAt) { o.ackAt = now(); log(o, 'customer_ack'); evalAlert(o); } }
       else if (a === 'push' && b.endpoint) { if (!o.push.some(s => s.endpoint === b.endpoint)) o.push.push(b); log(o, 'webpush_subscribed', { host: new URL(b.endpoint).host }); }
       else if (a === 'apns' && b.token) { if (!o.apns.includes(b.token)) o.apns.push(b.token); log(o, 'apns_registered'); }
-      else if (a === 'ping') { const st = String(b.state || '').slice(0, 80); if (st === 'heard_yes') o.heard = true; log(o, 'page', { state: st }); }
+      else if (a === 'ping') { const st = String(b.state || '').slice(0, 80); if (st === 'heard_yes') o.heard = true; markAlert(o, st); log(o, 'page', { state: st }); }
       else if (a === 'test') { for (const st of o.streams) st.testTone = true; log(o, 'test_tone'); }
       else if (a === 'phone') { o.phone = normPhone(b.phone); log(o, 'phone_set', { tail: o.phone.slice(-4), linked: devicesForOrder(o).length }); }
       else if (a === 'table') { o.table = String(b.table || '').replace(/[^0-9A-Za-z\u0600-\u06FF ]/g, '').slice(0, 12); log(o, 'table_set', { table: o.table }); }
