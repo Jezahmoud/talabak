@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>الكاشير | طلبك جاهز</title>
+<style>
+  :root { --brand:#0f3d2e; --ok:#1f8a4c; --warn:#b4541a; --bad:#a32020; --muted:#5b6b64; }
+  body { margin:0; font-family:-apple-system,"SF Arabic","Segoe UI",Tahoma,sans-serif; background:#f6f3ee; color:#13201b; }
+  .top { display:flex; gap:16px; align-items:center; padding:16px 20px; background:#fff; border-bottom:1px solid #e6e1d8; flex-wrap:wrap; }
+  .top h1 { font-size:20px; margin:0; flex:1; }
+  .cafeqr { display:flex; gap:10px; align-items:center; font-size:13px; color:var(--muted); }
+  .cafeqr img { width:84px; height:84px; }
+  button { font-family:inherit; border:0; border-radius:12px; padding:12px 18px; font-size:17px; font-weight:700; cursor:pointer; }
+  .new { background:var(--brand); color:#fff; font-size:19px; padding:14px 26px; }
+  .list { padding:16px 20px; display:grid; grid-template-columns:repeat(auto-fill,minmax(330px,1fr)); gap:14px; }
+  .card { background:#fff; border-radius:16px; padding:14px; display:grid; grid-template-columns:96px 1fr; gap:12px; }
+  .card img { width:96px; height:96px; }
+  .n { font-size:34px; font-weight:800; font-variant-numeric:tabular-nums; }
+  .st { font-size:14px; font-weight:700; padding:3px 10px; border-radius:20px; display:inline-block; margin-inline-start:6px; vertical-align:middle; }
+  .waiting { background:#fff1dc; color:#8a5a12; } .ready { background:#d8f5e3; color:var(--ok); } .picked { background:#eee; color:#666; }
+  .ch { font-size:13px; line-height:1.7; color:var(--muted); }
+  .ch .g { color:var(--ok); font-weight:700; } .ch .w { color:var(--warn); font-weight:700; } .ch .b { color:var(--bad); font-weight:700; }
+  .acts { grid-column:1/-1; display:flex; gap:8px; }
+  .acts button { flex:1; }
+  .r { background:var(--ok); color:#fff; } .p { background:#e9e5dd; color:#333; }
+  details { grid-column:1/-1; font-size:12px; color:var(--muted); } details pre { white-space:pre-wrap; margin:6px 0 0; direction:ltr; text-align:left; }
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>{{CAFE}} — لوحة الكاشير</h1>
+  <div class="cafeqr"><img src="/qr/cafe.svg" alt=""><div>رمز ثابت للمقهى<br>يختار منه العميل رقم طلبه</div></div>
+  <button class="new" id="new">طلب جديد</button>
+</div>
+<div class="list" id="list"></div>
+<script>
+const $ = s => document.getElementById(s);
+const post = (u, b) => fetch(u, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b||{}) }).then(r=>r.json());
+$('new').onclick = () => post('/api/orders').then(load);
+const LBL = { waiting:'قيد التحضير', ready:'جاهز', picked:'تم التسليم' };
+function audioState(o) {
+  if (!o.streams.length) return '<span class="w">لا يوجد بث صوتي متصل</span>';
+  return o.streams.map(s => s.blocked && s.lastDrainAgoSec > 8
+    ? `<span class="b">البث متصل لكن الجهاز توقف عن القراءة منذ ${s.lastDrainAgoSec} ث</span>`
+    : `<span class="g">الجهاز يسحب البث الصوتي</span> (${s.ageSec} ث)`).join('<br>');
+}
+function card(o) {
+  const t = new Date(o.createdAt).toLocaleTimeString('ar-SA', { hour:'2-digit', minute:'2-digit' });
+  const ev = o.events.map(e => `${new Date(e.t).toLocaleTimeString('en-GB')}  ${e.type}${Object.keys(e).length>2?' '+JSON.stringify(Object.fromEntries(Object.entries(e).filter(([k])=>k!=='t'&&k!=='type'))):''}`).join('\n');
+  return `<div class="card">
+    <a href="/o/${o.id}" target="_blank"><img src="/qr/${o.id}.svg" alt=""></a>
+    <div><div><span class="n">${o.number}</span><span class="st ${o.status}">${LBL[o.status]}</span></div>
+      <div class="ch">${t} · ${audioState(o)}<br>
+        إشعار متصفح: ${o.pushCount ? '<span class="g">مشترك</span>' : 'لا'} · App Clip: ${o.apnsCount ? '<span class="g">مسجل</span>' : 'لا'}
+        ${o.reactionSec != null ? `<br>استجاب العميل بعد <span class="g">${o.reactionSec} ث</span> من إعلان الجاهزية` : ''}</div></div>
+    <div class="acts">
+      ${o.status==='waiting' ? `<button class="r" onclick="post('/api/orders/${o.id}/ready').then(load)">جاهز</button>` : ''}
+      ${o.status!=='picked' ? `<button class="p" onclick="post('/api/orders/${o.id}/picked').then(load)">تم التسليم</button>` : ''}
+    </div>
+    <details><summary>سجل الأحداث</summary><pre>${ev}</pre></details>
+  </div>`;
+}
+let openDetails = new Set();
+async function load() {
+  document.querySelectorAll('details[open]').forEach(d => openDetails.add(d.parentElement.querySelector('a').href));
+  const l = await fetch('/api/orders').then(r=>r.json());
+  $('list').innerHTML = l.map(card).join('');
+  document.querySelectorAll('.card').forEach(c => { if (openDetails.has(c.querySelector('a').href)) c.querySelector('details').open = true; });
+  openDetails = new Set();
+}
+load(); setInterval(load, 1500);
+</script>
+</body>
+</html>

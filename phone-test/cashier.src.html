@@ -1,0 +1,53 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>كاشير طلبك جاهز</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>body{margin:0!important;padding:14px!important;max-width:none!important;font:16px/1.7 -apple-system,Tahoma,sans-serif;background:#f6f3ee;color:#13201b;direction:rtl}
+.c{background:#fff;border-radius:16px;padding:14px;margin:10px 0}button,.btn{display:block;width:100%;box-sizing:border-box;border:0;border-radius:12px;padding:14px;font:700 17px Tahoma;text-align:center;text-decoration:none;margin:6px 0;cursor:pointer}
+.p{background:#0f3d2e;color:#fff}.g{background:#1f8a4c;color:#fff}.l{background:#e9e5dd;color:#333}.wa{background:#25d366;color:#fff}
+.n{font-size:30px;font-weight:800}.ok{color:#1f8a4c;font-weight:700}.bad{color:#a32020;font-weight:700}.wn{color:#b4541a;font-weight:700}.mu{color:#5b6b64;font-size:14px}
+.q{display:flex;justify-content:center;background:#fff;padding:10px}.q img{width:100%;max-width:360px;height:auto}</style>
+<div class=c><b>لوحة الكاشير</b><div class=mu>اضغط «طلب جديد»، ثم إما أن يمسح صاحبك الرمز بكاميرا جواله، أو أرسل له الرابط بالواتساب. بعد أن يضغط «نبهني» ويقفل جواله، انتظر ثم اضغط «جاهز».</div></div>
+<button class=p id=new>طلب جديد</button><div id=list></div>
+<script>
+const HOST='https://ntfy.sh';
+const TPL=__TPL__;
+let orders=[],num=100;
+const $=i=>document.getElementById(i);
+async function bittyURL(html){
+  const cs=new Blob([html]).stream().pipeThrough(new CompressionStream('deflate'));
+  const buf=new Uint8Array(await new Response(cs).arrayBuffer());let s='';for(const b of buf)s+=String.fromCharCode(b);
+  return 'https://itty.bitty.site/#/'+btoa(s);
+}
+$('new').onclick=async()=>{
+  const n=++num, T='tj-'+Array.from(crypto.getRandomValues(new Uint8Array(9)),b=>(b%36).toString(36)).join('');
+  const url=await bittyURL(TPL.replaceAll('%H%',HOST).replaceAll('%T%',T).replaceAll('%N%',n));
+  const o={n,T,url,status:'waiting',hb:0,vis:'',first:0,chime:0,ack:0,ready:0};orders.unshift(o);
+  const es=new EventSource(HOST+'/'+T+'-c/sse');
+  es.onmessage=e=>{try{const m=JSON.parse(e.data).message||'';const now=Date.now();const [k,v]=m.split(' ');
+    if(k==='hb'){o.hb=now;o.vis=v;if(!o.first)o.first=now}
+    if(k==='chime'){o.chime=now;o.hb=now;o.vis=v}
+    if(k==='ack'){o.ack=now;o.hb=now}
+    render()}catch(_){}};
+  render();
+};
+async function send(o,msg){try{await fetch(HOST+'/'+o.T,{method:'POST',body:msg})}catch(e){alert('تعذر الإرسال، تأكد من الإنترنت')}}
+function act(i,a){const o=orders[i];if(a==='ready'){o.status='ready';o.ready=Date.now();send(o,'ready')}if(a==='picked'){o.status='picked';send(o,'picked')}render()}
+function diag(o){
+  const now=Date.now(),age=o.hb?Math.round((now-o.hb)/1000):null;let s='';
+  if(!o.first)s='<span class=wn>العميل لم يضغط «نبهني» بعد</span>';
+  else if(age<=25)s='<span class=ok>جوال العميل متصل</span> (آخر إشارة قبل '+age+' ث'+(o.vis==='hidden'?'، والشاشة مقفلة أو في الخلفية':'')+')';
+  else s='<span class=bad>انقطعت إشارة جوال العميل منذ '+age+' ث</span>';
+  if(o.ready&&o.chime)s+='<br>رن جوال العميل بعد <span class=ok>'+((o.chime-o.ready)/1000).toFixed(1)+' ث</span> من «جاهز»';
+  else if(o.ready&&o.status==='ready')s+='<br><span class=wn>لم يصل تأكيد الرنين بعد ('+Math.round((now-o.ready)/1000)+' ث)</span>';
+  if(o.ready&&o.ack)s+='<br>ضغط العميل «في الطريق» بعد <span class=ok>'+((o.ack-o.ready)/1000).toFixed(1)+' ث</span>';
+  return s;
+}
+function render(){
+  $('list').innerHTML=orders.map((o,i)=>`<div class=c><div class=n>طلب ${o.n} <span class=mu>${o.status==='waiting'?'قيد التحضير':o.status==='ready'?'جاهز':'تم التسليم'}</span></div>
+   <div id=d${i}>${diag(o)}</div>
+   ${o.status==='waiting'&&!o.first?`<div class=q id=q${i}></div><a class="btn wa" href="https://wa.me/?text=${encodeURIComponent('افتح الرابط واضغط «نبهني»: '+o.url)}" target=_blank>أرسل الرابط بالواتساب</a>`:''}
+   ${o.status==='waiting'?`<button class=g onclick="act(${i},'ready')">جاهز</button>`:''}
+   ${o.status!=='picked'?`<button class=l onclick="act(${i},'picked')">تم التسليم</button>`:''}</div>`).join('');
+  orders.forEach((o,i)=>{const q=$('q'+i);if(q&&window.QRCode)try{new QRCode(q,{text:o.url,width:720,height:720,correctLevel:QRCode.CorrectLevel.L})}catch(e){q.innerHTML='<div class=mu>الرمز طويل على هذا الجهاز، استخدم الواتساب</div>'}});
+}
+setInterval(()=>orders.forEach((o,i)=>{const d=$('d'+i);if(d)d.innerHTML=diag(o)}),1000);
+</script>

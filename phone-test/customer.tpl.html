@@ -1,0 +1,16 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><style>body{margin:0!important;padding:16px!important;max-width:none!important;font:18px/1.7 -apple-system,Tahoma;background:#f6f3ee;direction:rtl;text-align:center}div{background:#fff;border-radius:16px;padding:16px;margin:10px 0}b{display:block;font-size:70px}button{width:100%;border:0;border-radius:14px;padding:18px;font:700 20px Tahoma;background:#0f3d2e;color:#fff}.r{background:#9e9}.h{display:none}</style>
+<div>رقم طلبك<b>%N%</b><span id=s>قيد التحضير</span></div><button id=a>نبهني عند جاهزية طلبي</button><div id=m class=h>تم التفعيل. اقفل الجوال وضعه في جيبك ولا تغلق المتصفح</div><button id=k class=h>أنا في الطريق</button>
+<script>
+let H='%H%/%T%',$=i=>document.getElementById(i),x,p,R,I,C,P=m=>fetch(H+'-c',{method:'POST',body:m}).catch(_=>0),
+N=[880,1109,1319,880,1109,1319],D=[0,.22,.44,.9,1.12,1.34],
+W=(s,r,f)=>{let n=s*r|0,b=new DataView(new ArrayBuffer(44+n*2)),w=(o,t)=>[...t].forEach((c,i)=>b.setUint8(o+i,c.charCodeAt())),u=(o,v)=>b.setUint32(o,v,1),h=(o,v)=>b.setUint16(o,v,1);w(0,'RIFF');u(4,36+n*2);w(8,'WAVEfmt ');u(16,16);h(20,1);h(22,1);u(24,r);u(28,r*2);h(32,2);h(34,16);w(36,'data');u(40,n*2);for(let i=0;i<n;i++)b.setInt16(44+i*2,f(i/r)*3e4,1);return URL.createObjectURL(new Blob([b.buffer]))},
+Q=t=>{let s=0;D.forEach((a,i)=>{if(t>=a&&t<a+.6)s+=Math.exp((a-t)*5)*Math.sin(6.283*N[i]*t)});return s*.7},
+B=()=>{try{x.resume();let t=x.currentTime;D.forEach((a,i)=>{let o=x.createOscillator(),g=x.createGain();o.frequency.value=N[i];g.gain.setValueAtTime(.5,t+a);g.gain.exponentialRampToValueAtTime(1e-4,t+a+.6);o.connect(g).connect(x.destination);o.start(t+a);o.stop(t+a+.7)})}catch(e){}},
+Z=()=>P('hb '+document.visibilityState+' '+(x&&x.state)+' '+(p&&!p.paused)),
+G=()=>{if(R)return;R=1;document.body.className='r';$('s').textContent='طلبك جاهز';$('k').className='';P('chime '+document.visibilityState);p.src=C;p.play().catch(_=>0);let f=()=>{B();navigator.vibrate&&navigator.vibrate([500,200,900])};f();I=setInterval(f,4e3)};
+$('a').onclick=()=>{let t=Date.now()/1e3-9|0;C=W(4,22050,Q);try{navigator.audioSession.type='playback'}catch(e){}
+try{x=new AudioContext;let g=x.createGain(),o=x.createOscillator();g.gain.value=1e-4;o.connect(g).connect(x.destination);o.start();B()}catch(e){}
+p=new Audio(W(2,8e3,_=>Math.random()*1e-3));p.loop=1;p.play().catch(_=>0);
+$('a').className='h';$('m').className='';new EventSource(H+'/sse?since='+t).onmessage=e=>{let m=JSON.parse(e.data).message;m=='ready'&&G();m=='picked'&&($('s').textContent='تم التسليم')};Z();setInterval(Z,15e3);document.onvisibilitychange=Z};
+$('k').onclick=()=>{P('ack');clearInterval(I);p.src=W(1,8e3,_=>0);p.play()};
+</script>

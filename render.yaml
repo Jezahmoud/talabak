@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: talabak-jahiz
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=optional
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: CAFE_NAME
+        value: مقهى التجربة

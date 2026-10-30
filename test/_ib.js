@@ -1,0 +1,16 @@
+const pw=require('playwright');const fs=require('fs');
+(async()=>{const b=await pw.chromium.launch({args:['--autoplay-policy=no-user-gesture-required']});const ctx=await b.newContext({viewport:{width:400,height:850}});
+const errs=[];const cash=await ctx.newPage();cash.on('console',m=>{if(m.type()==='error')errs.push('cash:'+m.text())});
+await cash.goto(fs.readFileSync('/tmp/cashier_url.txt','utf8'));await cash.waitForTimeout(1500);
+const cf=cash.frames()[1];await cf.click('#new');await cash.waitForTimeout(2500);
+const href=await cf.getAttribute('a.wa','href');const custUrl=decodeURIComponent(href.split('text=')[1]).trim();
+console.log('customer url length',custUrl.length,'| QR drawn:',await cf.evaluate(()=>!!document.querySelector('.q img,.q canvas')));
+const cust=await ctx.newPage();cust.on('console',m=>{if(m.type()==='error')errs.push('cust:'+m.text())});await cust.goto(custUrl);await cust.waitForTimeout(1500);
+const uf=cust.frames()[1];console.log('customer number:',(await uf.textContent('b')).trim());
+await uf.click('#a');await cash.waitForTimeout(2500);console.log('cashier:',(await cf.textContent('#d0')).trim());
+await cf.click('button.g');await cash.waitForTimeout(2500);
+console.log('customer ringing:',await uf.evaluate(()=>document.body.className),'| status:',await uf.textContent('#s'));
+console.log('cashier:',(await cf.textContent('#d0')).trim());
+await uf.click('#k');await cash.waitForTimeout(1500);console.log('cashier after ack:',(await cf.textContent('#d0')).trim());
+const wavOk=await uf.evaluate(async()=>{try{const r=await fetch(p.src);const ab=await r.arrayBuffer();const ac=new OfflineAudioContext(1,8000,8000);const d=await ac.decodeAudioData(ab);return 'wav ok '+d.duration.toFixed(2)+'s'}catch(e){return 'wav err '+e}});console.log(wavOk);
+await cash.screenshot({path:'/tmp/ib_cash.png'});await cust.screenshot({path:'/tmp/ib_cust.png'});console.log('errors',errs);await b.close()})();

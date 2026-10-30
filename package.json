@@ -1,0 +1,23 @@
+{
+  "name": "talabak-jahiz",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "start": "node start.js",
+    "local": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "web-push": "^3.6.7"
+  },
+  "optionalDependencies": {
+    "cloudflared": "^0.7.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f3d2e">
+<title>طلبك جاهز</title>
+<style>
+  :root { --ink:#13201b; --muted:#5b6b64; --bg:#f6f3ee; --card:#fff; --brand:#0f3d2e; --accent:#e8a33d; --ok:#1f8a4c; --warn:#b4541a; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family: -apple-system, "SF Arabic", "Segoe UI", Tahoma, sans-serif; background:var(--bg); color:var(--ink); min-height:100vh; display:flex; flex-direction:column; }
+  header { padding:18px 20px 6px; color:var(--muted); font-size:15px; }
+  main { flex:1; padding:8px 20px 28px; display:flex; flex-direction:column; gap:16px; }
+  .num { background:var(--card); border-radius:22px; padding:22px; text-align:center; box-shadow:0 1px 0 rgba(0,0,0,.04); }
+  .num small { display:block; color:var(--muted); font-size:15px; }
+  .num b { font-size:76px; line-height:1.1; letter-spacing:1px; font-variant-numeric:tabular-nums; }
+  .status { font-size:18px; margin-top:6px; }
+  button.big { width:100%; border:0; border-radius:18px; padding:22px 18px; font-size:21px; font-weight:700; background:var(--brand); color:#fff; font-family:inherit; }
+  button.big:active { transform:scale(.99); }
+  button.ghost { background:transparent; color:var(--brand); border:2px solid var(--brand); }
+  .note { background:var(--card); border-radius:16px; padding:14px 16px; font-size:16px; line-height:1.7; color:var(--ink); }
+  .note.warn { border-inline-start:5px solid var(--warn); }
+  .note.ok { border-inline-start:5px solid var(--ok); }
+  .hidden { display:none !important; }
+  body.ready { animation: flash 1s infinite; }
+  body.ready .num { background:var(--ok); color:#fff; } body.ready .num small { color:#e6fff0; }
+  @keyframes flash { 0%,100% { background:var(--bg);} 50% { background:#c9f2d8; } }
+  footer { text-align:center; color:var(--muted); font-size:12px; padding:10px; }
+</style>
+</head>
+<body>
+<header>{{CAFE}}</header>
+<main>
+  <div class="num"><small>رقم طلبك</small><b id="num">…</b><div class="status" id="status">جاري التحضير</div></div>
+
+  <button class="big" id="arm">نبهني عند جاهزية طلبي</button>
+
+  <div class="note ok hidden" id="armed">
+    التنبيه مفعل. يمكنك قفل الشاشة ووضع الجوال في جيبك، وسيرن الجوال عند جاهزية طلبك.
+    <br>سمعت نغمة التجربة الآن؟ إن لم تسمعها فارفع صوت الوسائط.
+  </div>
+  <div class="note warn hidden" id="paused">
+    توقف التنبيه الصوتي. اضغط الزر أدناه لإعادة تفعيله.
+  </div>
+  <button class="big ghost hidden" id="rearm">إعادة تفعيل التنبيه</button>
+  <button class="big hidden" id="ack">أنا في الطريق لاستلامه</button>
+  <div class="note hidden" id="done">تم تسليم الطلب. بالعافية.</div>
+</main>
+<footer>لا يحتاج تطبيقا ولا تسجيلا. يعمل التنبيه ما دامت هذه الصفحة مفتوحة.</footer>
+<audio id="player" preload="none" playsinline></audio>
+<script>
+const id = location.pathname.split('/').pop();
+const qs = new URLSearchParams(location.search);
+const MODE = qs.get('mode') || 'auto';          // auto | audio | push | both  (للمقارنة أثناء الاختبار)
+const VAPID = '{{VAPID}}';
+const $ = s => document.getElementById(s);
+const player = $('player');
+let armed = false, pushOn = false, status = 'waiting', number = '';
+
+function api(a, body) { return fetch(`/api/orders/${id}/${a}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{}) }).catch(()=>{}); }
+function b64ToU8(s){ const p='='.repeat((4-s.length%4)%4); const b=atob((s+p).replace(/-/g,'+').replace(/_/g,'/')); return Uint8Array.from([...b].map(c=>c.charCodeAt(0))); }
+
+function startAudio() {
+  // نوع جلسة الصوت "تشغيل" يجعل Safari يتجاهل زر الصامت ويستمر عند قفل الشاشة
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch(e){}
+  player.src = `/stream/${id}?t=${Date.now()}`;
+  const p = player.play();
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: `طلب رقم ${number}`, artist: '{{CAFE}}', album: 'سيرن الجوال عند الجاهزية' });
+  }
+  return p;
+}
+function stopAudio() { player.pause(); player.removeAttribute('src'); player.load(); }
+
+async function enablePush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return false;
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { api('ping', { state:'push_'+perm }); return false; }
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: b64ToU8(VAPID) });
+    await api('push', sub.toJSON()); return true;
+  } catch(e) { api('ping', { state:'push_err' }); return false; }
+}
+
+$('arm').onclick = async () => {
+  $('arm').disabled = true;
+  const wantAudio = MODE !== 'push';
+  const wantPush = MODE !== 'audio';
+  let audioP = wantAudio ? startAudio() : Promise.resolve();   // يبدأ داخل لمسة المستخدم نفسها
+  const pushP = wantPush ? enablePush() : Promise.resolve(false);
+  try { await audioP; } catch(e) { api('ping', { state:'audio_blocked' }); }
+  pushOn = await pushP;
+  // في الوضع التلقائي: إذا قبل العميل الإشعارات (أندرويد غالبا) نوقف البث بعد نغمة التجربة لتوفير البطارية وعدم مزاحمة موسيقاه
+  if (MODE === 'auto' && pushOn) setTimeout(() => { if (status === 'waiting') stopAudio(); }, 3500);
+  armed = true;
+  $('arm').classList.add('hidden'); $('armed').classList.remove('hidden');
+  api('ping', { state: `armed audio=${wantAudio} push=${pushOn}` });
+};
+
+player.addEventListener('pause', () => { if (armed && status === 'waiting' && player.getAttribute('src')) { $('paused').classList.remove('hidden'); $('rearm').classList.remove('hidden'); api('ping', { state:'audio_paused' }); } });
+player.addEventListener('playing', () => { $('paused').classList.add('hidden'); $('rearm').classList.add('hidden'); });
+player.addEventListener('error', () => { if (armed && status === 'waiting') { $('paused').classList.remove('hidden'); $('rearm').classList.remove('hidden'); api('ping', { state:'audio_error' }); } });
+$('rearm').onclick = () => { startAudio().catch(()=>{}); };
+
+$('ack').onclick = () => { api('ack'); $('ack').classList.add('hidden'); document.body.classList.remove('ready'); $('status').textContent = 'بانتظارك عند الكاشير'; };
+
+function render() {
+  $('num').textContent = number;
+  if (status === 'ready') {
+    $('status').textContent = 'طلبك جاهز، تفضل بالاستلام';
+    document.body.classList.add('ready'); $('ack').classList.remove('hidden'); $('arm').classList.add('hidden');
+    if (navigator.vibrate) navigator.vibrate([400,200,400,200,800]);
+  } else if (status === 'picked') {
+    document.body.classList.remove('ready'); ['ack','armed','paused','rearm','arm'].forEach(x=>$(x).classList.add('hidden'));
+    $('done').classList.remove('hidden'); $('status').textContent = 'تم التسليم'; stopAudio();
+  }
+}
+const es = new EventSource(`/events/${id}`);
+es.onmessage = e => { const d = JSON.parse(e.data); const changed = d.status !== status; status = d.status; number = d.number; if (changed || !$('num').textContent.match(/\d/)) render(); };
+document.addEventListener('visibilitychange', () => api('ping', { state: document.visibilityState + (player.paused ? ' paused' : ' playing') }));
+if (qs.get('ack') === '1') { api('ack'); }
+</script>
+</body>
+</html>

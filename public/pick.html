@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>اختر رقم طلبك</title>
+<style>
+  body { margin:0; font-family:-apple-system,"SF Arabic","Segoe UI",Tahoma,sans-serif; background:#f6f3ee; color:#13201b; }
+  h1 { font-size:20px; padding:20px 20px 4px; margin:0; } p { color:#5b6b64; padding:0 20px; margin:6px 0 14px; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; padding:0 20px 24px; }
+  a { display:block; background:#fff; border-radius:18px; text-align:center; padding:22px 0; font-size:34px; font-weight:700; color:#0f3d2e; text-decoration:none; font-variant-numeric:tabular-nums; }
+  .empty { padding:20px; color:#5b6b64; }
+</style>
+</head>
+<body>
+<h1>{{CAFE}}</h1>
+<p>اضغط على رقم طلبك المطبوع في الفاتورة</p>
+<div class="grid" id="g"></div>
+<script>
+async function load(){ const r = await fetch('/api/open'); const l = await r.json();
+  document.getElementById('g').innerHTML = l.length ? l.map(o=>`<a href="/o/${o.id}">${o.number}</a>`).join('') : '<div class="empty">لا توجد طلبات قيد التحضير الآن</div>'; }
+load(); setInterval(load, 3000);
+</script>
+</body>
+</html>
