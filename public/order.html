@@ -72,7 +72,12 @@
   </div>
   <button class="big ghost hidden" id="rearm">إعادة تفعيل التنبيه</button>
   <button class="big hidden" id="ack">أنا في الطريق لاستلامه</button>
-  <div class="note hidden" id="done">تم تسليم الطلب. بالعافية.<br><a href="/c?app=1" style="color:#0f3d2e;font-weight:700">طلب جديد؟ اختر رقمك من هنا</a></div>
+  <div class="note hidden" id="done">تم تسليم الطلب. بالعافية.</div>
+  <div class="note ok hidden" id="setup">
+    <b>تبي جوالك يهتز ويضيء المرة الجاية؟</b><br>
+    خطوة وحدة تسويها مرة في العمر، وبعدها يوصلك التنبيه في كل زيارة بدون ما تفتح أي صفحة.
+    <a href="/app" class="big" style="display:block;text-align:center;margin-top:10px;background:var(--brand);color:#fff;border-radius:14px;padding:14px;text-decoration:none;font-weight:800">وريني كيف</a>
+  </div>
 </main>
 <div id="alarm" class="hidden" role="alert">
   <div class="rip"><i></i><i></i><i></i><b>🔔</b></div>
@@ -93,7 +98,9 @@ const $ = s => document.getElementById(s);
 const player = $('player');
 const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 document.getElementById('mf').href = '/manifest.webmanifest?o=' + id;   // الأيقونة تفتح على نفس الطلب مباشرة
-const STANDALONE = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+const STANDALONE = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches || qs.get('force') === '1';
+const APP = STANDALONE;                          // داخل تطبيق الشاشة الرئيسية: الإشعار هو القناة، لا البث الصوتي
+const DEV = localStorage.getItem('talabak_dev');
 let armed = false, pushOn = false, status = 'waiting', number = '';
 
 function api(a, body) { return fetch(`/api/orders/${id}/${a}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{}) }).catch(()=>{}); }
@@ -136,8 +143,21 @@ async function enablePush() {
   } catch(e) { api('ping', { state:`push_err ${step} ${e.name}: ${e.message}`.slice(0, 80) }); return false; }
 }
 
+function appArmedUI(on) {
+  $('arm').classList.add('hidden'); $('armed').classList.remove('hidden');
+  $('armed').innerHTML = on ? '✅ التنبيه مفعل. بيوصلك إشعار يرن ويهتز ويضيء الشاشة أول ما يجهز طلبك. اقفل الجوال وحطه في جيبك.'
+    : '<span style="color:var(--warn)">الإشعارات غير مفعلة لهذا التطبيق. افتح الإعدادات ← الإشعارات ← «طلبك جاهز» وفعّل السماح بالإشعارات.</span>';
+}
+async function appBoot() {
+  if (DEV) api('claim', { device: DEV });
+  if (('Notification' in window) && Notification.permission === 'granted') { pushOn = await enablePush(); armed = true; appArmedUI(pushOn); api('ping', { state: `app_armed push=${pushOn}` }); }
+  else if (('Notification' in window) && Notification.permission === 'denied') { appArmedUI(false); }
+  else { $('arm').textContent = 'فعّل التنبيه'; }
+}
+if (APP) appBoot();
 $('arm').onclick = async () => {
   $('arm').disabled = true;
+  if (APP) { pushOn = await enablePush(); armed = true; appArmedUI(pushOn); api('ping', { state: `app_armed push=${pushOn}` }); return; }
   const wantAudio = MODE !== 'push';
   const wantPush = MODE !== 'audio';
   let audioP = wantAudio ? startAudio() : Promise.resolve();   // يبدأ داخل لمسة المستخدم نفسها
@@ -158,7 +178,7 @@ $('no').onclick = () => { $('louder').classList.remove('hidden'); api('test'); a
   if (player.paused) startAudio().catch(()=>{});
   clearInterval(retest); let n = 0; retest = setInterval(() => { if (++n > 12) return clearInterval(retest); api('test'); }, 4500); };   // تتكرر النغمة لين يسمعها
 // إذا انقطع البث (تبدل الشبكة مثلا) نعيد الاتصال تلقائيا متى أمكن
-function retry() { if (armed && status === 'waiting' && (player.paused || player.error)) startAudio().catch(()=>{}); }
+function retry() { if (APP) return; if (armed && status === 'waiting' && (player.paused || player.error)) startAudio().catch(()=>{}); }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') retry(); });
 window.addEventListener('online', retry);
 player.addEventListener('stalled', () => setTimeout(retry, 3000));
@@ -202,6 +222,7 @@ function render() {
   } else if (status === 'picked') {
     stopAlarm(); ['ack','armed','paused','rearm','arm','heard','louder'].forEach(x=>$(x).classList.add('hidden'));
     $('done').classList.remove('hidden'); $('status').textContent = 'تم التسليم'; stopAudio();
+    if (IOS && !APP) $('setup').classList.remove('hidden');
   }
 }
 const es = new EventSource(`/events/${id}`);

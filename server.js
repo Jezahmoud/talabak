@@ -70,14 +70,31 @@ const now = () => Date.now();
 function newOrder(number, source = 'cashier', meta = {}) {
   const id = crypto.randomBytes(5).toString('hex');
   const o = { id, number: String(number ?? nextNumber++), status: 'waiting', source, meta, createdAt: now(), readyAt: null, ackAt: null, pickedAt: null,
-    push: [], apns: [], streams: new Set(), events: [] };
-  orders.set(id, o); log(o, 'created', { source }); return o;
+    phone: normPhone(meta.phone), devices: new Set(), push: [], apns: [], streams: new Set(), events: [] };
+  orders.set(id, o); log(o, 'created', { source, phone: o.phone ? '***' + o.phone.slice(-4) : undefined }); return o;
+}
+// ---------- Devices (جوالات مسجلة مرة واحدة: تطبيق الشاشة الرئيسية) ----------
+const devicesFile = path.join(DATA_DIR, 'devices.json');
+const devices = new Map();             // id -> { id, subs:[], phone, ua, createdAt, lastSeen, lastTest, log:[] }
+try { for (const d of JSON.parse(fs.readFileSync(devicesFile, 'utf8'))) devices.set(d.id, d); } catch {}
+let saveT = null;
+function saveDevices() { clearTimeout(saveT); saveT = setTimeout(() => { try { fs.writeFileSync(devicesFile, JSON.stringify([...devices.values()])); } catch (e) { console.error(e); } }, 300); }
+function normPhone(v) { let d = String(v || '').replace(/\D/g, ''); if (!d) return ''; d = d.replace(/^00/, '').replace(/^966/, '').replace(/^0/, ''); return d.slice(-9); }
+function devLog(d, type, data = {}) { d.log = d.log || []; d.log.push({ t: now(), type, ...data }); if (d.log.length > 40) d.log.shift(); saveDevices(); }
+function devicesForOrder(o) {
+  const out = [];
+  for (const d of devices.values()) {
+    if (!d.subs || !d.subs.length) continue;
+    if ((o.phone && d.phone === o.phone) || (o.devices && o.devices.has(d.id))) out.push(d);
+  }
+  return out;
 }
 function log(o, type, data = {}) { o.events.push({ t: now(), type, ...data }); if (o.events.length > 200) o.events.shift(); sse(o); }
 function publicOrder(o) {
   const streams = [...o.streams].map(s => ({ ageSec: Math.round((now() - s.startedAt) / 1000), blocked: s.blocked,
     lastDrainAgoSec: Math.round((now() - s.lastFlowAt) / 1000), sentSec: Math.round(s.framesSent * FRAME_SEC), ua: s.ua }));
   return { id: o.id, number: o.number, status: o.status, createdAt: o.createdAt, readyAt: o.readyAt, ackAt: o.ackAt, pickedAt: o.pickedAt,
+    phoneTail: o.phone ? o.phone.slice(-4) : '', linkedDevices: devicesForOrder(o).length,
     heard: !!o.heard, pushCount: o.push.length, pushApple: o.push.filter(x => String(x.endpoint).includes('push.apple.com')).length, apnsCount: o.apns.length, streams, events: o.events.slice(-12),
     reactionSec: o.readyAt && o.ackAt ? Math.round((o.ackAt - o.readyAt) / 100) / 10 : null };
 }
@@ -123,19 +140,45 @@ setInterval(() => {
 }, 50);
 
 // ---------- Push channels ----------
+const https = require('https');
+const isApple = sub => /push\.apple\.com/.test(String(sub.endpoint));
+function sendRaw(details, contentType) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(details.endpoint); const headers = { ...details.headers }; if (contentType) headers['Content-Type'] = contentType;
+    const req = (u.protocol === 'http:' ? http : https).request(u, { method: 'POST', headers }, res => { let b = ''; res.on('data', c => b += c); res.on('end', () => resolve({ statusCode: res.statusCode, body: b })); });
+    req.on('error', reject); req.setTimeout(10000, () => req.destroy(new Error('timeout'))); req.end(details.body);
+  });
+}
+// يبني الرسالتين: Declarative Web Push لأجهزة Apple (يعرضه النظام مباشرة مع الصوت والاهتزاز)، والرسالة التقليدية لعامل الخدمة في أندرويد
+function buildPayload(sub, n, B) {
+  if (isApple(sub)) return JSON.stringify({ web_push: 8030, notification: { title: n.title, lang: 'ar', dir: 'rtl', body: n.body, navigate: n.url, silent: false, app_badge: '1' } });
+  return JSON.stringify({ title: n.title, body: n.body, tag: n.tag, url: n.url, image: `${B}/ready-banner.png`, icon: `${B}/icon-192.png`, badge: `${B}/badge.png` });
+}
+async function pushTo(sub, n, B = PUBLIC_URL) {
+  const payload = buildPayload(sub, n, B);
+  const r = await sendRaw(webpush.generateRequestDetails(sub, payload, { TTL: 600, urgency: 'high' }), isApple(sub) ? 'application/notification+json' : undefined);
+  if (r.statusCode >= 400) throw Object.assign(new Error(r.body), { statusCode: r.statusCode, body: r.body });
+  return r;
+}
+function readyTargets(o) {
+  const seen = new Set(), out = [];
+  for (const sub of o.push) if (!seen.has(sub.endpoint)) { seen.add(sub.endpoint); out.push({ sub }); }
+  for (const d of devicesForOrder(o)) for (const sub of d.subs) if (!seen.has(sub.endpoint)) { seen.add(sub.endpoint); out.push({ sub, dev: d }); }
+  return out;
+}
 async function notifyAll(o, repeat = false) {
-  if (repeat && !o.push.length) return;
-  for (const sub of o.push) {
-    // ايفون قد يستبدل الإشعار ذا الوسم نفسه بصمت، فنعطي كل تكرار وسما جديدا ليهتز من جديد
-    const apple = String(sub.endpoint).includes('push.apple.com');
-    const tag = repeat ? `order-${o.id}-${Date.now()}` : `order-${o.id}`;
-    const B = o.base || PUBLIC_URL;
-    const payload = JSON.stringify({ title: `🔔 طلبك جاهز | رقم ${o.number}`, body: `تفضل بالاستلام من ${CAFE_NAME}`, tag, url: `${B}/o/${o.id}`,
-      image: `${B}/ready-banner.png`, icon: `${B}/icon-192.png`, badge: `${B}/badge.png` });
-    try { const r = await webpush.sendNotification(sub, payload, { TTL: 600, urgency: 'high' }); log(o, 'webpush_sent', { status: r.statusCode }); }
-    catch (e) { log(o, 'webpush_error', { status: e.statusCode, msg: String(e.body || e.message).slice(0, 120) }); }
+  const targets = readyTargets(o);
+  if (repeat && !targets.length) return;
+  const B = o.base || PUBLIC_URL;
+  for (const { sub, dev } of targets) {
+    // ايفون: كل تكرار إشعار مستقل (يكتفي بثلاثة)، أندرويد: نفس الوسم ليهتز من جديد دون تكديس
+    if (repeat && isApple(sub) && (o.repeats || 0) >= 2) continue;
+    const n = { title: `🔔 طلبك جاهز | رقم ${o.number}`, body: `تفضل بالاستلام من ${CAFE_NAME}`, tag: `order-${o.id}`, url: `${B}/o/${o.id}?app=1` };
+    try { const r = await pushTo(sub, n, B); log(o, 'webpush_sent', { status: r.statusCode, via: dev ? 'device' : 'page', apple: isApple(sub) }); if (dev) devLog(dev, 'ready_sent', { order: o.number, status: r.statusCode }); }
+    catch (e) { log(o, 'webpush_error', { status: e.statusCode, msg: String(e.body || e.message).slice(0, 120) }); if (dev) devLog(dev, 'ready_error', { status: e.statusCode });
+      if (dev && (e.statusCode === 404 || e.statusCode === 410)) { dev.subs = dev.subs.filter(x => x.endpoint !== sub.endpoint); saveDevices(); } }
   }
-  if (repeat) return;
+  if (repeat) { o.repeats = (o.repeats || 0) + 1; return; }
   for (const tok of o.apns) {
     try { const st = await sendApns(tok, { aps: { alert: { title: CAFE_NAME, body: `طلبك رقم ${o.number} جاهز` }, sound: 'default', 'interruption-level': 'time-sensitive',
       'target-content-id': `${o.base || PUBLIC_URL}/o/${o.id}` } }); log(o, 'apns_sent', { status: st }); }
@@ -171,7 +214,7 @@ function sse(o) { const set = sseClients.get(o.id); if (!set) return; const d = 
 function setReady(o, by) {
   if (o.status !== 'waiting') return; o.status = 'ready'; o.readyAt = now(); log(o, 'ready', { by }); notifyAll(o);
   const iv = setInterval(() => {
-    if (o.status !== 'ready' || o.ackAt || now() - o.readyAt > 180e3 || !o.push.length) return clearInterval(iv);
+    if (o.status !== 'ready' || o.ackAt || now() - o.readyAt > 180e3 || !readyTargets(o).length) return clearInterval(iv);
     notifyAll(o, true);
   }, 12000);
 }
@@ -187,7 +230,7 @@ const page = (name, base = PUBLIC_URL) => fs.readFileSync(path.join(__dirname, '
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v8', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v9', 'text/plain');
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
     if ((m = p.match(/^\/o\/([a-f0-9]+)$/))) {
@@ -206,11 +249,34 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/qr.svg') return send(res, 200, await QRCode.toString(String(url.searchParams.get('text') || '').slice(0, 500), { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }), 'image/svg+xml');
     if (p === '/manifest.webmanifest') return send(res, 200, JSON.stringify({
-      id: '/', name: 'طلبك جاهز', short_name: 'طلبك جاهز', lang: 'ar', dir: 'rtl', display: 'standalone', start_url: /^[a-f0-9]+$/.test(url.searchParams.get('o') || '') ? `/o/${url.searchParams.get('o')}?app=1` : '/c?app=1', scope: '/',
+      id: '/', name: 'طلبك جاهز', short_name: 'طلبك جاهز', lang: 'ar', dir: 'rtl', display: 'standalone', start_url: '/app', scope: '/',
       background_color: '#f6f3ee', theme_color: '#0f3d2e',
       icons: [192, 512].map(n => ({ src: `/icon-${n}.png`, sizes: `${n}x${n}`, type: 'image/png', purpose: 'any' })) }), 'application/manifest+json');
     if ((m = p.match(/^\/(ready-banner|ready-art|wait-art|badge)\.png$/))) { res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' }); return res.end(fs.readFileSync(path.join(__dirname, `assets/${m[1]}.png`))); }
     if ((m = p.match(/^\/(?:apple-touch-icon|icon-(180|192|512))(?:-precomposed)?\.png$/))) return send(res, 200, fs.readFileSync(path.join(__dirname, `assets/icon-${m[1] || 180}.png`)), 'image/png');
+    if (p === '/app') return send(res, 200, page('app.html', BASE));
+    if (p === '/api/devices' && req.method === 'POST') {
+      const b = await readBody(req); const id = String(b.id || '').replace(/[^a-z0-9]/gi, '').slice(0, 40); if (!id) return json(res, { error: 'id' }, 400);
+      let d = devices.get(id); if (!d) { d = { id, subs: [], phone: '', ua: String(req.headers['user-agent'] || '').slice(0, 80), createdAt: now(), log: [] }; devices.set(id, d); devLog(d, 'created'); }
+      d.lastSeen = now();
+      if (b.sub && b.sub.endpoint) { if (!d.subs.some(x => x.endpoint === b.sub.endpoint)) { d.subs = [b.sub]; devLog(d, 'subscribed', { host: new URL(b.sub.endpoint).host }); } }
+      if (b.phone !== undefined) { const ph = normPhone(b.phone); if (ph !== d.phone) { d.phone = ph; devLog(d, 'phone_set', { tail: ph.slice(-4) }); } }
+      if (b.state) devLog(d, 'state', { state: String(b.state).slice(0, 80) });
+      saveDevices();
+      return json(res, { ok: true, id, subscribed: d.subs.length > 0, phoneTail: d.phone.slice(-4), apple: d.subs.some(isApple) });
+    }
+    if ((m = p.match(/^\/api\/devices\/([a-z0-9]+)\/(test|report)$/i))) {
+      const d = devices.get(m[1]); if (!d) return json(res, { error: 'no_device' }, 404);
+      const b = await readBody(req);
+      if (m[2] === 'report') { devLog(d, 'test_report', { result: String(b.result || '').slice(0, 40) }); d.lastTest = String(b.result || '').slice(0, 40); return json(res, { ok: true }); }
+      if (!d.subs.length) return json(res, { ok: false, error: 'no_sub' });
+      const n = { title: '✅ تجربة التنبيه', body: 'إذا سمعت صوت أو حسيت اهتزاز فكل شي تمام', tag: `test-${Date.now()}`, url: `${BASE}/app?test=1` };
+      const out = [];
+      for (const sub of d.subs) { try { const r = await pushTo(sub, n, BASE); out.push(r.statusCode); devLog(d, 'test_sent', { status: r.statusCode, apple: isApple(sub) }); }
+        catch (e) { out.push(e.statusCode || 0); devLog(d, 'test_error', { status: e.statusCode, msg: String(e.body || e.message).slice(0, 80) }); } }
+      return json(res, { ok: out.every(c => c >= 200 && c < 300), status: out });
+    }
+    if (p === '/api/devices' && req.method === 'GET') return json(res, [...devices.values()].map(d => ({ id: d.id, subs: d.subs.length, apple: d.subs.some(isApple), phoneTail: d.phone.slice(-4), ua: d.ua, lastTest: d.lastTest, log: (d.log || []).slice(-8) })));
     if (p === '/sticker') return send(res, 200, page('sticker.html', BASE));
     if ((m = p.match(/^\/events\/([a-f0-9]+)$/))) {
       const o = orders.get(m[1]); if (!o) return send(res, 404, '');
@@ -222,8 +288,8 @@ const server = http.createServer(async (req, res) => {
     // API
     if (p === '/api/orders' && req.method === 'GET') return json(res, [...orders.values()].filter(o => now() - o.createdAt < 6 * 3600e3).reverse().map(publicOrder));
     if (p === '/api/open' && req.method === 'GET') return json(res, [...orders.values()].filter(o => o.status === 'waiting' && now() - o.createdAt < 30 * 60e3).reverse().map(o => ({ id: o.id, number: o.number })));
-    if (p === '/api/orders' && req.method === 'POST') { const b = await readBody(req); const o = newOrder(b.number); o.base = BASE; return json(res, publicOrder(o)); }
-    if ((m = p.match(/^\/api\/orders\/([a-f0-9]+)(?:\/(ready|picked|ack|push|apns|ping|test))?$/))) {
+    if (p === '/api/orders' && req.method === 'POST') { const b = await readBody(req); const o = newOrder(b.number, 'cashier', { phone: b.phone }); o.base = BASE; return json(res, publicOrder(o)); }
+    if ((m = p.match(/^\/api\/orders\/([a-f0-9]+)(?:\/(ready|picked|ack|push|apns|ping|test|phone|claim))?$/))) {
       const o = orders.get(m[1]); if (!o) return json(res, { error: 'not found' }, 404);
       const a = m[2]; const b = req.method === 'POST' ? await readBody(req) : {};
       if (a === 'ready') setReady(o, 'cashier');
@@ -233,6 +299,8 @@ const server = http.createServer(async (req, res) => {
       else if (a === 'apns' && b.token) { if (!o.apns.includes(b.token)) o.apns.push(b.token); log(o, 'apns_registered'); }
       else if (a === 'ping') { const st = String(b.state || '').slice(0, 80); if (st === 'heard_yes') o.heard = true; log(o, 'page', { state: st }); }
       else if (a === 'test') { for (const st of o.streams) st.testTone = true; log(o, 'test_tone'); }
+      else if (a === 'phone') { o.phone = normPhone(b.phone); log(o, 'phone_set', { tail: o.phone.slice(-4), linked: devicesForOrder(o).length }); }
+      else if (a === 'claim' && b.device && devices.has(String(b.device))) { o.devices.add(String(b.device)); log(o, 'device_claimed', { linked: devicesForOrder(o).length }); }
       return json(res, publicOrder(o));
     }
     // تكامل Foodics (هيكل مبدئي): ينشئ الطلب عند وصول حدث إنشاء، ويعلن الجاهزية عند وصول حالة "منتهٍ".
@@ -241,7 +309,7 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req); const ord = b.order || b.data?.order || b;
       const ref = String(ord.reference ?? ord.number ?? ord.id ?? '');
       let o = [...orders.values()].find(x => x.meta.foodicsRef === ref);
-      if (!o) o = newOrder(ord.reference ?? undefined, 'foodics', { foodicsRef: ref });
+      if (!o) o = newOrder(ord.reference ?? undefined, 'foodics', { foodicsRef: ref, phone: ord.customer?.phone || ord.customer_phone || ord.phone });
       const st = String(ord.status ?? ord.kitchen_status ?? '').toLowerCase();
       if (['ready', 'done', '4', 'prepared'].includes(st)) setReady(o, 'foodics');
       return json(res, { ok: true, id: o.id });

@@ -1,21 +1,23 @@
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
-// عامل الخدمة: يعرض إشعار الجاهزية (أندرويد وأي متصفح يدعم Web Push داخل التبويب)
+// عامل الخدمة: يعرض إشعار الجاهزية. يفهم صيغة Declarative Web Push (Apple) والصيغة التقليدية (أندرويد)
 self.addEventListener('push', e => {
   let d = {}; try { d = e.data.json(); } catch {}
-  e.waitUntil(self.registration.showNotification(d.title || 'طلبك جاهز', {
-    body: d.body || 'طلبك جاهز', tag: d.tag, image: d.image, icon: d.icon, badge: d.badge, renotify: true, silent: false, requireInteraction: true,
-    vibrate: [600, 200, 600, 200, 600, 200, 1200], data: { url: d.url }, dir: 'rtl', lang: 'ar'
+  const n = d.notification || d;
+  e.waitUntil(self.registration.showNotification(n.title || 'طلبك جاهز', {
+    body: n.body || 'طلبك جاهز', tag: n.tag || 'talabak', image: n.image, icon: n.icon, badge: n.badge,
+    renotify: true, requireInteraction: true, silent: false,
+    vibrate: [600, 200, 600, 200, 600, 200, 1200], data: { url: n.navigate || n.url }, dir: 'rtl', lang: 'ar'
   }));
 });
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  const url = (e.notification.data && e.notification.data.url) || '/';
+  const url = (e.notification.data && e.notification.data.url) || '/app';
   e.waitUntil((async () => {
-    const id = url.split('/').pop();
-    fetch(`/api/orders/${id}/ack`, { method: 'POST' }).catch(() => {});
+    const m = url.match(/\/o\/([a-f0-9]+)/);
+    if (m) fetch(`/api/orders/${m[1]}/ack`, { method: 'POST' }).catch(() => {});
     const all = await clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const c of all) if (c.url.startsWith(url)) return c.focus();
+    for (const c of all) if (c.url.startsWith(url.split('?')[0])) return c.focus();
     return clients.openWindow(url);
   })());
 });

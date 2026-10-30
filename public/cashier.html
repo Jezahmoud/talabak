@@ -31,13 +31,14 @@
   <h1>{{CAFE}} — لوحة الكاشير</h1>
   <div class="cafeqr"><img src="/qr/cafe.svg" alt=""><div>رمز ثابت للمقهى<br>يختار منه العميل رقم طلبه</div></div>
   <a href="/sticker" target="_blank" style="font:700 15px Tahoma;color:#0f3d2e;padding:10px">ملصق الكاونتر مع رمز الواي فاي</a>
-  <button class="new" id="new">طلب جديد</button>
+  <span style="display:inline-flex;gap:6px;align-items:center"><input id="phone" type="tel" placeholder="جوال العميل (اختياري)" style="font:16px Tahoma;padding:10px;border:1px solid #ccc;border-radius:10px;width:190px;direction:ltr"><button class="new" id="new">طلب جديد</button></span>
+  <span id="devs" style="font:14px Tahoma;color:#5b6b64"></span>
 </div>
 <div class="list" id="list"></div>
 <script>
 const $ = s => document.getElementById(s);
 const post = (u, b) => fetch(u, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b||{}) }).then(r=>r.json());
-$('new').onclick = () => post('/api/orders').then(load);
+$('new').onclick = () => post('/api/orders', { phone: $('phone').value }).then(() => { $('phone').value = ''; load(); });
 const LBL = { waiting:'قيد التحضير', ready:'جاهز', picked:'تم التسليم' };
 function audioState(o) {
   if (!o.streams.length) return '<span class="w">لا يوجد بث صوتي متصل</span>';
@@ -52,6 +53,7 @@ function card(o) {
     <a href="/o/${o.id}" target="_blank"><img src="/qr/${o.id}.svg" alt=""></a>
     <div><div><span class="n">${o.number}</span><span class="st ${o.status}">${LBL[o.status]}</span></div>
       <div class="ch">${t} · ${audioState(o)}<br>
+        جوال العميل: ${o.linkedDevices ? `<span class="g">مسجل ✅ يوصله إشعار يرن ويهتز</span>` : (o.phoneTail ? `<span class="w">…${o.phoneTail} غير مسجل</span>` : 'لم يُدخل')}<br>
         الصوت: ${o.heard ? '<span class="g">العميل أكد أنه سمع</span>' : '<span class="w">لم يؤكد</span>'} · اهتزاز: ${o.pushCount ? `<span class="g">مفعل${o.pushApple ? ' (ايفون)' : ''}</span>` : 'لا'} · App Clip: ${o.apnsCount ? '<span class="g">مسجل</span>' : 'لا'}
         ${o.reactionSec != null ? `<br>استجاب العميل بعد <span class="g">${o.reactionSec} ث</span> من إعلان الجاهزية` : ''}</div></div>
     <div class="acts">
@@ -69,7 +71,8 @@ async function load() {
   document.querySelectorAll('.card').forEach(c => { if (openDetails.has(c.querySelector('a').href)) c.querySelector('details').open = true; });
   openDetails = new Set();
 }
-load(); setInterval(load, 1500);
+async function loadDevs() { try { const d = await fetch('/api/devices').then(r=>r.json()); const ok = d.filter(x=>x.subs).length; $('devs').textContent = `جوالات مسجلة: ${ok}` + (d.some(x=>x.lastTest) ? ` · آخر تجربة: ${d.filter(x=>x.lastTest).map(x=>x.lastTest).join('، ')}` : ''); } catch {} }
+load(); setInterval(load, 1500); loadDevs(); setInterval(loadDevs, 5000);
 </script>
 </body>
 </html>
