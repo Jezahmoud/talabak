@@ -175,7 +175,8 @@ async function notifyAll(o, repeat = false) {
     if (repeat && isApple(sub) && (o.repeats || 0) >= 2) continue;
     const n = { title: `🔔 طلبك جاهز | رقم ${o.number}`, body: `تفضل بالاستلام من ${CAFE_NAME}`, tag: `order-${o.id}`, url: `${B}/o/${o.id}?app=1` };
     try { const r = await pushTo(sub, n, B); log(o, 'webpush_sent', { status: r.statusCode, via: dev ? 'device' : 'page', apple: isApple(sub) }); if (dev) devLog(dev, 'ready_sent', { order: o.number, status: r.statusCode }); }
-    catch (e) { log(o, 'webpush_error', { status: e.statusCode, msg: String(e.body || e.message).slice(0, 120) }); if (dev) devLog(dev, 'ready_error', { status: e.statusCode });
+    catch (e) { log(o, 'webpush_error', { status: e.statusCode, msg: (e.statusCode === 410 || e.statusCode === 404) ? 'الجوال ألغى الاشتراك (أُوقفت إشعارات الموقع من الجوال)' : String(e.body || e.message).slice(0, 120) }); if (dev) devLog(dev, 'ready_error', { status: e.statusCode });
+      if (e.statusCode === 410 || e.statusCode === 404) o.push = o.push.filter(x => x.endpoint !== sub.endpoint);
       if (dev && (e.statusCode === 404 || e.statusCode === 410)) { dev.subs = dev.subs.filter(x => x.endpoint !== sub.endpoint); saveDevices(); } }
   }
   if (repeat) { o.repeats = (o.repeats || 0) + 1; return; }
@@ -230,7 +231,7 @@ const page = (name, base = PUBLIC_URL) => fs.readFileSync(path.join(__dirname, '
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v11', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v12', 'text/plain');
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
     if ((m = p.match(/^\/o\/([a-f0-9]+)$/))) {
@@ -258,6 +259,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/board') return send(res, 200, page('board.html', BASE));
     if (p === '/api/devices' && req.method === 'POST') {
       const b = await readBody(req); const id = String(b.id || '').replace(/[^a-z0-9]/gi, '').slice(0, 40); if (!id) return json(res, { error: 'id' }, 400);
+      if (id === 'sw') { console.log('sw event:', b.state); return json(res, { ok: true }); }
       let d = devices.get(id); if (!d) { d = { id, subs: [], phone: '', ua: String(req.headers['user-agent'] || '').slice(0, 80), createdAt: now(), log: [] }; devices.set(id, d); devLog(d, 'created'); }
       d.lastSeen = now();
       if (b.sub && b.sub.endpoint) { if (!d.subs.some(x => x.endpoint === b.sub.endpoint)) { d.subs = [b.sub]; devLog(d, 'subscribed', { host: new URL(b.sub.endpoint).host }); } }

@@ -27,3 +27,11 @@ self.addEventListener('notificationclick', e => {
     return clients.openWindow(url);
   })());
 });
+// يسجل تغيّر الاشتراك أو إلغاءه من جهة الجوال (مثل إيقاف إشعارات الموقع من الإعدادات)
+self.addEventListener('pushsubscriptionchange', e => {
+  e.waitUntil(fetch('/api/devices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'sw', state: 'pushsubscriptionchange ' + (e.newSubscription ? 'renewed' : 'revoked') }) }).catch(() => {}));
+});
+self.addEventListener('notificationclose', e => {
+  const url = (e.notification.data && e.notification.data.url) || ''; const m = url.match(/\/o\/([a-f0-9]+)/);
+  if (m) e.waitUntil(fetch(`/api/orders/${m[1]}/ping`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state: 'sw_notification_closed' }) }).catch(() => {}));
+});

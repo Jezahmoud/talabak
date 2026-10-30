@@ -228,7 +228,7 @@ function render() {
 }
 const es = new EventSource(`/events/${id}`);
 es.onmessage = e => { const d = JSON.parse(e.data); const changed = d.status !== status; status = d.status; number = d.number; if (changed || !$('num').textContent.match(/\d/)) render(); };
-document.addEventListener('visibilitychange', () => api('ping', { state: document.visibilityState + (player.paused ? ' paused' : ' playing') }));
+document.addEventListener('visibilitychange', () => api('ping', { state: document.visibilityState + (player.paused ? ' paused' : ' playing') + (('Notification' in window) ? ' perm=' + Notification.permission : '') }));
 if (qs.get('ack') === '1') { api('ack'); }
 </script>
 </body>
