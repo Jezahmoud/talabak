@@ -128,7 +128,7 @@ async function notifyAll(o, repeat = false) {
   for (const sub of o.push) {
     // ايفون قد يستبدل الإشعار ذا الوسم نفسه بصمت، فنعطي كل تكرار وسما جديدا ليهتز من جديد
     const apple = String(sub.endpoint).includes('push.apple.com');
-    const tag = apple && repeat ? `order-${o.id}-${Date.now()}` : `order-${o.id}`;
+    const tag = repeat ? `order-${o.id}-${Date.now()}` : `order-${o.id}`;
     const payload = JSON.stringify({ title: `${CAFE_NAME}`, body: `طلبك رقم ${o.number} جاهز، تفضل بالاستلام`, tag, url: `${o.base || PUBLIC_URL}/o/${o.id}` });
     try { const r = await webpush.sendNotification(sub, payload, { TTL: 600, urgency: 'high' }); log(o, 'webpush_sent', { status: r.statusCode }); }
     catch (e) { log(o, 'webpush_error', { status: e.statusCode, msg: String(e.body || e.message).slice(0, 120) }); }
@@ -185,7 +185,7 @@ const page = (name, base = PUBLIC_URL) => fs.readFileSync(path.join(__dirname, '
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v6', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v7', 'text/plain');
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
     if ((m = p.match(/^\/o\/([a-f0-9]+)$/))) {

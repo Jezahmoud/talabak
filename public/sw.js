@@ -4,7 +4,7 @@ self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 self.addEventListener('push', e => {
   let d = {}; try { d = e.data.json(); } catch {}
   e.waitUntil(self.registration.showNotification(d.title || 'طلبك جاهز', {
-    body: d.body || 'طلبك جاهز', tag: d.tag, renotify: true, requireInteraction: true,
+    body: d.body || 'طلبك جاهز', tag: d.tag, renotify: true, silent: false, requireInteraction: true,
     vibrate: [500, 200, 500, 200, 900], data: { url: d.url }, dir: 'rtl', lang: 'ar'
   }));
 });

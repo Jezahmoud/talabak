@@ -128,8 +128,8 @@ $('arm').onclick = async () => {
   // البث الصوتي يبقى شغالا على كل الأجهزة، والإشعار قناة إضافية فوقه (أندرويد)
   armed = true;
   $('arm').classList.add('hidden'); $('armed').classList.remove('hidden'); $('heard').classList.remove('hidden');
-  if (pushOn) $('armed').textContent = 'التنبيه مفعل بالصوت والاهتزاز. اقفل الشاشة وحط الجوال في جيبك، وبيهتز حتى لو الصوت مقفول.';
-  else if (IOS && !STANDALONE) $('vib').classList.remove('hidden');
+  // ملاحظة: إشعارات تطبيقات الويب في الايفون تصل صامتة بلا صوت ولا اهتزاز (قيد من Apple)، فلا نوجه العميل لإضافة الصفحة للشاشة الرئيسية
+  if (pushOn && !IOS) $('armed').textContent = 'التنبيه مفعل بالصوت والإشعار. اقفل الشاشة وحط الجوال في جيبك.';
   api('ping', { state: `armed audio=${wantAudio} push=${pushOn} ios=${IOS} app=${STANDALONE}` });
 };
 $('yes').onclick = () => { $('heard').classList.add('hidden'); $('louder').classList.add('hidden'); api('ping', { state:'heard_yes' }); };
