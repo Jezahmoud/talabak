@@ -21,7 +21,7 @@ const B = 'http://localhost:3999';
   const devId = await pg.evaluate(() => localStorage.getItem('talabak_dev'));
   await pg.fill('#phone', '0551234567'); await pg.click('#savephone'); await pg.waitForTimeout(400);
   console.log('phone saved text:', await pg.textContent('#phoneok'));
-  await pg.click(`#g a[data-id="${o.id}"]`); await pg.waitForURL(/\/o\//); await pg.waitForTimeout(1200);
+  pg.once('dialog', d => d.accept()); await pg.locator('#g a', { hasText: new RegExp('^' + o.number + '$') }).click(); await pg.waitForURL(/\/o\//); await pg.waitForTimeout(1200);
   console.log('order page url has app=1:', pg.url().includes('app=1'), '| arm text:', (await pg.textContent('#arm')).trim(), '| armed visible:', await pg.isVisible('#armed'), '| errors:', errs.join('|') || 'none');
   const devs = await (await fetch(B + '/api/devices')).json(); const d = devs.find(x => x.id === devId);
   const st = (await (await fetch(B + '/api/orders')).json()).find(x => x.id === o.id);

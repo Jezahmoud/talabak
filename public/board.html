@@ -31,12 +31,13 @@
 </main>
 <footer>تظهر الأرقام الجاهزة تلقائيا من الكاشير، وتختفي بعد التسليم</footer>
 <script>
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 async function load() {
   try {
     const l = await (await fetch('/api/board', { cache: 'no-store' })).json(); document.getElementById('off').style.display = 'none';
     const ready = l.filter(o => o.status === 'ready' && !o.table), wait = l.filter(o => o.status === 'waiting' && !o.table);
-    document.getElementById('ready').innerHTML = ready.length ? ready.map(o => `<div class="n${o.hot ? ' hot' : ''}">${o.number}</div>`).join('') : '<div class="empty">لا توجد طلبات جاهزة</div>';
-    document.getElementById('wait').innerHTML = wait.length ? wait.map(o => `<div class="n">${o.number}</div>`).join('') : '<div class="empty">—</div>';
+    document.getElementById('ready').innerHTML = ready.length ? ready.map(o => `<div class="n${o.hot ? ' hot' : ''}">${esc(o.number)}</div>`).join('') : '<div class="empty">لا توجد طلبات جاهزة</div>';
+    document.getElementById('wait').innerHTML = wait.length ? wait.map(o => `<div class="n">${esc(o.number)}</div>`).join('') : '<div class="empty">—</div>';
   } catch { document.getElementById('off').style.display = 'block'; }
 }
 load(); setInterval(load, 2000);

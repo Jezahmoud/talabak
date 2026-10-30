@@ -9,21 +9,48 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="طلبك جاهز">
 <style>
+  :root { color-scheme: light; }
   body { margin:0; font-family:-apple-system,"SF Arabic","Segoe UI",Tahoma,sans-serif; background:#f6f3ee; color:#13201b; }
-  h1 { font-size:20px; padding:20px 20px 4px; margin:0; } p { color:#5b6b64; padding:0 20px; margin:6px 0 14px; }
+  h1 { font-size:20px; padding:20px 20px 4px; margin:0; } p { color:#5b6b64; padding:0 20px; margin:6px 0 14px; font-size:16px; }
   .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; padding:0 20px 24px; }
-  a { display:block; background:#fff; border-radius:18px; text-align:center; padding:22px 0; font-size:34px; font-weight:700; color:#0f3d2e; text-decoration:none; font-variant-numeric:tabular-nums; }
-  .empty { padding:20px; color:#5b6b64; }
+  .grid button { background:#fff; border:0; border-radius:18px; padding:22px 0; font:700 34px -apple-system,Tahoma,sans-serif; color:#0f3d2e; font-variant-numeric:tabular-nums; }
+  .grid button.rd { background:#d8f5e3; }
+  .empty, .err { padding:20px; color:#5b6b64; grid-column:1/-1; }
+  .err { color:#a32020; font-weight:700; }
+  #confirm { position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:20px; }
+  #confirm > div { background:#fff; border-radius:20px; padding:24px; width:min(100%,360px); text-align:center; }
+  #confirm b { display:block; font-size:56px; color:#0f3d2e; margin:8px 0; }
+  #confirm button { width:100%; border:0; border-radius:14px; padding:16px; font:800 19px -apple-system,Tahoma,sans-serif; margin-top:10px; }
+  .yes { background:#0f3d2e; color:#fff; } .no { background:#eee; color:#333; }
 </style>
 </head>
 <body>
 <h1>{{CAFE}}</h1>
-<p>اضغط على رقم طلبك المطبوع في الفاتورة</p>
-<div class="grid" id="g"></div>
+<p>اضغط الرقم اللي عطاك إياه الكاشير</p>
+<div class="grid" id="g"><div class="empty">جاري التحميل…</div></div>
+<div id="confirm"><div>
+  <div>رقم طلبك؟</div><b id="cn"></b>
+  <button class="yes" id="cy">نعم، هذا رقمي</button>
+  <button class="no" id="cno">لا، رجوع</button>
+</div></div>
 <script>
-async function load(){ const r = await fetch('/api/open'); const l = await r.json();
-  document.getElementById('g').innerHTML = l.length ? l.map(o=>`<a href="/o/${o.id}">${o.number}</a>`).join('') : '<div class="empty">لا توجد طلبات قيد التحضير الآن</div>'; }
-load(); setInterval(load, 3000);
+const $ = s => document.getElementById(s);
+let picked = null;
+async function load() {
+  try {
+    const l = await (await fetch('/api/open', { cache: 'no-store' })).json();
+    $('g').innerHTML = l.length ? '' : '<div class="empty">لا توجد طلبات الآن. إذا طلبت للتو انتظر ثواني أو اسأل الكاشير.</div>';
+    for (const o of l) { const b = document.createElement('button'); b.textContent = o.number; if (o.ready) b.className = 'rd'; b.onclick = () => ask(o.number); $('g').appendChild(b); }
+  } catch { $('g').innerHTML = '<div class="err">تعذر الاتصال. تأكد من الإنترنت أو اتصل بشبكة المقهى.</div>'; }
+}
+function ask(n) { picked = n; $('cn').textContent = n; $('confirm').style.display = 'flex'; }
+$('cno').onclick = () => { $('confirm').style.display = 'none'; };
+$('cy').onclick = async () => {
+  const r = await fetch('/api/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ number: picked }) }).then(r => r.json()).catch(() => ({}));
+  if (r.url) location.href = r.url + (new URLSearchParams(location.search).get('app') ? '?app=1' : '');
+  else { $('confirm').style.display = 'none'; load(); }
+};
+load(); setInterval(load, 4000);
 </script>
 </body>
 </html>

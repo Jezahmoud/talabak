@@ -1,11 +1,11 @@
-require('./_auth');
+const { customerCookie } = require('./_auth');
 // اختبار خادم: هل يحقن الخادم النغمة في البث الحي بعد إعلان الجاهزية؟ وكم التأخير؟
 const http = require('http'); const fs = require('fs'); const { execFileSync } = require('child_process');
 const B = 'http://localhost:3999';
 const post = p => fetch(B + p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
 (async () => {
-  const o = await post('/api/orders'); const t0 = Date.now(); const chunks = []; let bytes = 0;
-  http.get(`${B}/stream/${o.id}`, res => {
+  const o = await post('/api/orders'); const ck = await customerCookie(B, o.id); const t0 = Date.now(); const chunks = []; let bytes = 0;
+  http.get(`${B}/stream/${o.id}?test=1`, { headers: { Cookie: ck } }, res => {
     console.log('status', res.statusCode, res.headers['content-type']);
     res.on('data', c => { chunks.push(c); bytes += c.length; });
   });

@@ -53,6 +53,7 @@ function parseMp3Frames(buf) {
   return { frames, frameSec };
 }
 const chime = parseMp3Frames(fs.readFileSync(path.join(__dirname, 'assets/chime.mp3')));
+const testTone = parseMp3Frames(fs.readFileSync(path.join(__dirname, 'assets/test_tone.mp3')));   // نغمة تجربة قصيرة تختلف عن نغمة الجاهزية
 const silence = parseMp3Frames(fs.readFileSync(path.join(__dirname, 'assets', process.env.SILENCE_FILE || 'silence_64.mp3')));
 // صمت بمعدل بت مرتفع للدفعة الأولى فقط: المتصفحات تنتظر عددا من البايتات (نحو 32 كيلوبايت في Chromium) قبل بدء التشغيل،
 // فنملأ هذا الحد بأقصر مدة زمنية ممكنة حتى لا يتأخر التنبيه بعدها
@@ -68,20 +69,21 @@ const STREAM_MAX_MIN = Number(process.env.STREAM_MAX_MIN || 60);
 const orders = new Map();              // id -> order
 let nextNumber = 101;
 const now = () => Date.now();
-const riyadhDay = t => new Date(t + 3 * 3600e3).toISOString().slice(0, 10);   // الترقيم يبدأ من 101 كل يوم بتوقيت الرياض
+const DAY_START_HOUR = Number(process.env.DAY_START_HOUR ?? 4);   // يبدأ يوم الترقيم الساعة 4 فجرا بتوقيت الرياض حتى لا يتصفر وسط الوردية الليلية
+const riyadhDay = t => new Date(t + (3 - DAY_START_HOUR) * 3600e3).toISOString().slice(0, 10);
 // حفظ الطلبات على القرص حتى لا تضيع عند إعادة تشغيل الخادم
 const ordersFile = path.join(DATA_DIR, 'orders.json');
 function writeAtomic(file, data) { const tmp = file + '.tmp'; fs.writeFileSync(tmp, data); fs.renameSync(tmp, file); }
 let saveOT = null;
 function saveOrders() { clearTimeout(saveOT); saveOT = setTimeout(() => { try {
   const keep = [...orders.values()].filter(o => now() - o.createdAt < 12 * 3600e3)
-    .map(o => ({ ...o, devices: [...o.devices], streams: undefined, repeatTimer: undefined, events: o.events.slice(-60) }));
+    .map(o => ({ ...o, devices: [...o.devices], clients: [...(o.clients || [])], acks: [...(o.acks || [])], streams: undefined, repeatTimer: undefined, events: o.events.slice(-60) }));
   writeAtomic(ordersFile, JSON.stringify({ nextNumber, day: riyadhDay(now()), orders: keep }));
 } catch (e) { console.error('saveOrders', e.message); } }, 500); }
 function loadOrders() { try {
   const d = JSON.parse(fs.readFileSync(ordersFile, 'utf8'));
   if (d.day === riyadhDay(now())) nextNumber = d.nextNumber || 101;
-  for (const o of d.orders || []) { o.devices = new Set(o.devices || []); o.streams = new Set(); orders.set(o.id, o); }
+  for (const o of d.orders || []) { o.devices = new Set(o.devices || []); o.clients = new Set(o.clients || []); o.acks = new Set(o.acks || []); o.streams = new Set(); orders.set(o.id, o); }
   console.log(`استرجعت ${orders.size} طلبا محفوظا`);
 } catch {} }
 let numberDay = riyadhDay(now());
@@ -89,7 +91,7 @@ function newOrder(number, source = 'cashier', meta = {}) {
   if (riyadhDay(now()) !== numberDay) { numberDay = riyadhDay(now()); nextNumber = 101; }
   const id = crypto.randomBytes(8).toString('hex');
   const o = { id, number: String(number ?? nextNumber++), status: 'waiting', source, meta, createdAt: now(), readyAt: null, ackAt: null, pickedAt: null,
-    phone: normPhone(meta.phone), devices: new Set(), push: [], apns: [], streams: new Set(), events: [] };
+    phone: normPhone(meta.phone), devices: new Set(), clients: new Set(), acks: new Set(), push: [], apns: [], streams: new Set(), events: [] };
   orders.set(id, o); log(o, 'created', { source, phone: o.phone ? '***' + o.phone.slice(-4) : undefined }); saveOrders(); return o;
 }
 // ---------- Devices (جوالات مسجلة مرة واحدة: تطبيق الشاشة الرئيسية) ----------
@@ -104,13 +106,15 @@ function devicesForOrder(o) {
   const out = [];
   for (const d of devices.values()) {
     if (!d.subs || !d.subs.length) continue;
-    if ((o.phone && d.phone === o.phone) || (o.devices && o.devices.has(d.id))) out.push(d);
+    // الربط برقم الجوال لا يفعل إلا بعد أن يثبت الجهاز الرقم مرة واحدة بفتح طلب مسجل بالرقم نفسه (حتى لا يستقبل غريب إشعارات رقم ليس له)
+    if ((o.phone && d.phone === o.phone && d.phoneVerified === o.phone) || (o.devices && o.devices.has(d.id))) out.push(d);
   }
   return out;
 }
 loadOrders();
 function log(o, type, data = {}) { o.events.push({ t: now(), type, ...data }); if (o.events.length > 200) o.events.shift(); sse(o); saveOrders(); }
 function customerOrder(o) { return { id: o.id, number: o.number, status: o.status, table: o.table || '' }; }
+function readyAgeSec(o) { return o.readyAt ? Math.round((now() - o.readyAt) / 1000) : null; }
 function boardOrder(o) { return { number: o.number, status: o.status, table: o.table || '', hot: !!(o.alert && o.alert.level === 2) }; }
 function publicOrder(o) {
   const streams = [...o.streams].map(s => ({ ageSec: Math.round((now() - s.startedAt) / 1000), blocked: s.blocked,
@@ -118,30 +122,35 @@ function publicOrder(o) {
   return { id: o.id, number: o.number, status: o.status, createdAt: o.createdAt, readyAt: o.readyAt, ackAt: o.ackAt, pickedAt: o.pickedAt,
     phoneTail: o.phone ? o.phone.slice(-4) : '', linkedDevices: devicesForOrder(o).length, table: o.table || '', alert: o.alert || null,
     heard: !!o.heard, pushCount: o.push.length, pushApple: o.push.filter(x => String(x.endpoint).includes('push.apple.com')).length, apnsCount: o.apns.length, streams, events: o.events.slice(-12),
-    reactionSec: o.readyAt && o.ackAt ? Math.round((o.ackAt - o.readyAt) / 100) / 10 : null };
+    reactionSec: o.readyAt && o.ackAt ? Math.round((o.ackAt - o.readyAt) / 100) / 10 : null, readyAgeSec: readyAgeSec(o), pickedAgeSec: o.pickedAt ? Math.round((now() - o.pickedAt) / 1000) : null,
+    clients: (o.clients || new Set()).size, createdAgeSec: Math.round((now() - o.createdAt) / 1000), clientAudio: o.clientAudio || '' };
 }
 
 // ---------- Live audio stream ----------
 // كل عميل فعّل التنبيه الصوتي يسحب بثا لا ينتهي: صمت شبه تام، وعند الجاهزية يحقن الخادم النغمة في البث نفسه.
 // الهاتف لا يحتاج إلى تشغيل أي كود عند الجاهزية؛ مشغل الوسائط وحده يسحب البث ويشغل ما يصله.
-function startStream(o, req, res) {
+const MAX_STREAMS_PER_ORDER = 3, MAX_STREAMS_TOTAL = Number(process.env.MAX_STREAMS || 2000);
+let totalStreams = 0;
+function startStream(o, req, res, key, wantTest) {
+  for (const old of o.streams) if (old.key === key) { try { old.res.end(); } catch {} o.streams.delete(old); totalStreams--; }   // جهاز واحد يسحب بثا واحدا
+  if (o.streams.size >= MAX_STREAMS_PER_ORDER || totalStreams >= MAX_STREAMS_TOTAL) return send(res, 429, '');
   res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store, no-transform', 'Accept-Ranges': 'none',
     'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
   const s = { res, startedAt: now(), framesSent: 0, blocked: false, lastFlowAt: now(), ua: (req.headers['user-agent'] || '').slice(0, 80),
-    queue: [], silenceIdx: 0, nextChimeAt: 0, testTone: true };
+    queue: [], silenceIdx: 0, nextChimeAt: 0, testTone: !!wantTest, key };
   let acc = 0, k = 0; while (acc < BURST_BYTES) { const f = silenceHi.frames[k++ % silenceHi.frames.length]; s.queue.push(f); acc += f.length; }
   s.burstFrames = s.queue.length;
-  o.streams.add(s); log(o, 'stream_open', { ua: s.ua });
+  o.streams.add(s); totalStreams++; log(o, 'stream_open', { ua: s.ua });
   res.on('drain', () => { s.blocked = false; s.lastFlowAt = now(); });
-  const close = () => { if (o.streams.delete(s)) log(o, 'stream_closed', { afterSec: Math.round((now() - s.startedAt) / 1000) }); };
+  const close = () => { if (o.streams.delete(s)) { totalStreams--; log(o, 'stream_closed', { afterSec: Math.round((now() - s.startedAt) / 1000) }); } };
   req.on('close', close); res.on('error', close);
 }
 function nextFrame(o, s) {
   if (s.queue.length) return s.queue.shift();
   const t = now();
   // نغمة تجريبية مرة واحدة عند البدء حتى يعرف العميل أن الصوت يعمل ويضبط مستواه
-  if (s.testTone) { s.testTone = false; s.queue.push(...chime.frames); return s.queue.shift(); }
-  if (o.status === 'ready' && !o.ackAt && t - o.readyAt < CHIME_MAX_SEC * 1000 && t >= s.nextChimeAt) {
+  if (s.testTone) { s.testTone = false; s.queue.push(...testTone.frames); return s.queue.shift(); }
+  if (o.status === 'ready' && !o.acks.has(s.key) && t - o.readyAt < CHIME_MAX_SEC * 1000 && t >= s.nextChimeAt) {
     s.nextChimeAt = t + CHIME_REPEAT_EVERY_SEC * 1000;
     if (!s.chimeLogged) { s.chimeLogged = true; log(o, 'chime_injected', { delayMs: t - o.readyAt }); }
     s.queue.push(...chime.frames); return s.queue.shift();
@@ -152,7 +161,8 @@ setInterval(() => {
   const t = now();
   for (const o of orders.values()) for (const s of o.streams) {
     // إيقاف البث عند التسليم، أو بعد دقيقة من تأكيد العميل، أو بعد ساعة انتظار، لتوفير البيانات والبطارية
-    if (o.status === 'picked' || (o.ackAt && t - o.ackAt > 60e3) || t - s.startedAt > STREAM_MAX_MIN * 60e3) { s.res.end(); o.streams.delete(s); log(o, 'stream_stopped', { why: o.status === 'picked' ? 'picked' : o.ackAt ? 'acked' : 'timeout' }); continue; }
+    const chimeOver = o.status === 'ready' && t - o.readyAt > (CHIME_MAX_SEC + 120) * 1000;
+    if (o.status === 'picked' || (o.acks.has(s.key) && o.ackAt && t - o.ackAt > 60e3) || chimeOver || t - s.startedAt > STREAM_MAX_MIN * 60e3) { s.res.end(); o.streams.delete(s); totalStreams--; log(o, 'stream_stopped', { why: o.status === 'picked' ? 'picked' : chimeOver ? 'chime_window_over' : o.acks.has(s.key) ? 'acked' : 'timeout' }); continue; }
     const due = Math.floor(((t - s.startedAt) / 1000 + PREBUFFER_SEC) / FRAME_SEC) + s.burstFrames - s.framesSent;
     if (s.blocked || due <= 0) continue;
     const chunk = []; for (let k = 0; k < Math.min(due, 200); k++) chunk.push(nextFrame(o, s));
@@ -165,6 +175,10 @@ setInterval(() => {
 // ---------- Push channels ----------
 const https = require('https');
 const isApple = sub => /push\.apple\.com/.test(String(sub.endpoint));
+// لا نرسل إلا إلى خدمات الإشعارات الرسمية (يمنع استغلال الخادم لطلب عناوين داخلية)
+const PUSH_HOSTS = [/^fcm\.googleapis\.com$/, /(^|\.)push\.apple\.com$/, /^updates\.push\.services\.mozilla\.com$/, /(^|\.)notify\.windows\.com$/];
+function validSub(sub) { try { const u = new URL(sub.endpoint); return u.protocol === 'https:' && PUSH_HOSTS.some(r => r.test(u.hostname)) && sub.keys && typeof sub.keys.p256dh === 'string' && typeof sub.keys.auth === 'string'; } catch { return false; } }
+const ALLOW_TEST_PUSH_HOSTS = !!process.env.ALLOW_TEST_PUSH_HOSTS;   // للاختبارات المحلية فقط
 function sendRaw(details, contentType) {
   return new Promise((resolve, reject) => {
     const u = new URL(details.endpoint); const headers = { ...details.headers }; if (contentType) headers['Content-Type'] = contentType;
@@ -194,6 +208,7 @@ async function notifyAll(o, repeat = false) {
   if (repeat && !targets.length) return;
   const B = o.base || PUBLIC_URL;
   for (const { sub, dev } of targets) {
+    if (o.status !== 'ready') return;   // تراجع الموظف أثناء الإرسال
     // ايفون: كل تكرار إشعار مستقل (يكتفي بثلاثة)، أندرويد: نفس الوسم ليهتز من جديد دون تكديس
     if (repeat && isApple(sub) && (o.repeats || 0) >= 2) continue;
     const n = { title: `🔔 طلبك جاهز | رقم ${o.number}`, body: `تفضل بالاستلام من ${CAFE_NAME}`, tag: `order-${o.id}`, url: `${B}/o/${o.id}?app=1` };
@@ -236,7 +251,7 @@ function sse(o) { const set = sseClients.get(o.id); if (!set) return; const d = 
 // ---------- Actions ----------
 // عند الجاهزية: إشعار فوري ثم تكرار كل 12 ثانية حتى يستجيب العميل أو تمر 3 دقائق، فيهتز الجوال مع كل تكرار (أندرويد)
 function setReady(o, by) {
-  if (o.status !== 'waiting') return; o.status = 'ready'; o.readyAt = now(); o.ackAt = null; log(o, 'ready', { by });
+  if (o.status !== 'waiting') return; o.status = 'ready'; o.readyAt = now(); o.ackAt = null; o.acks = new Set(); log(o, 'ready', { by });
   o.alert = { shown: false, seen: false, level: 0, note: '' };
   notifyAll(o);
   clearInterval(o.repeatTimer);
@@ -250,21 +265,24 @@ const UNDO_SEC = 20;
 async function undoReady(o) {
   if (o.status !== 'ready' || now() - o.readyAt > UNDO_SEC * 1000) return false;
   clearInterval(o.repeatTimer); o.status = 'waiting'; o.readyAt = null; o.alert = null; o.ackAt = null; o.repeats = 0;
-  for (const s of o.streams) { s.nextChimeAt = 0; s.chimeLogged = false; }
+  for (const s of o.streams) { s.nextChimeAt = 0; s.chimeLogged = false; s.queue = []; }
+  o.acks = new Set();
   log(o, 'ready_undone');
   const B = o.base || PUBLIC_URL;
   for (const { sub } of readyTargets(o)) {
-    try { await pushTo(sub, { title: `تنبيه بالخطأ | طلب ${o.number}`, body: 'طلبك لسا قيد التحضير، بنبهك أول ما يجهز', tag: `order-${o.id}`, url: `${B}/o/${o.id}` }, B); } catch {}
+    try { await pushTo(sub, { title: `تنبيه بالخطأ | طلب ${o.number}`, body: 'طلبك باقي قيد التحضير، وبنبهك أول ما يجهز', tag: `order-${o.id}`, url: `${B}/o/${o.id}` }, B); } catch {}
   }
   return true;
 }
 // الإشارات التي تؤكد أن العميل استلم التنبيه أو رآه
 function markAlert(o, state) {
+  if (/^audio_(paused|error|resume_failed|blocked)/.test(state)) o.clientAudio = 'down';
+  else if (/^(audio_resumed|armed audio=true|visible playing|hidden playing)/.test(state)) o.clientAudio = 'up';
   if (!o.alert) return;
   if (state === 'sw_notification_shown') o.alert.shown = true;
   if (['ready_page_visible', 'ready_screen_seen'].includes(state) || state.startsWith('visible')) o.alert.seen = true;
 }
-function audioFlowing(o) { return [...o.streams].some(s => !s.blocked || now() - s.lastFlowAt < 8000); }
+function audioFlowing(o) { return o.clientAudio !== 'down' && [...o.streams].some(s => !s.blocked || now() - s.lastFlowAt < 8000); }
 function evalAlert(o) {
   if (o.status !== 'ready' || !o.alert) return;
   const age = (now() - o.readyAt) / 1000, a = o.alert;
@@ -273,45 +291,65 @@ function evalAlert(o) {
   if (audioFlowing(o)) chan.push('الجوال يستقبل نغمة الرنين');
   if (a.shown) chan.push('الإشعار ظهر على الجوال');
   else if (readyTargets(o).some(t => isApple(t.sub))) chan.push('أُرسل إشعار للايفون');
-  if (chan.length) { a.level = age > 60 ? 1 : 0; a.note = chan.join(' و') + (age > 60 ? '، لكنه لم يستجب بعد' : ''); return; }
+  const onlyUnconfirmed = chan.length === 1 && !a.shown && !audioFlowing(o);
+  if (chan.length) { a.level = age > 60 || (onlyUnconfirmed && age > 20) ? 1 : 0; a.note = chan.join(' و') + (age > 60 ? '، لكنه لم يستجب بعد' : ''); return; }
   a.level = age > 15 ? 2 : 1; a.note = age > 15 ? 'لا يصل أي تنبيه للجوال. وجّهه لشاشة الطلبات أو الطاولة' : 'لم يتأكد وصول التنبيه بعد';
 }
 setInterval(() => { for (const o of orders.values()) evalAlert(o); }, 3000);
-function setPicked(o) { clearInterval(o.repeatTimer); o.status = 'picked'; o.pickedAt = now(); log(o, 'picked'); }
+function setPicked(o) { if (o.status === 'picked') return; clearInterval(o.repeatTimer); o.prevStatus = o.status; o.status = 'picked'; o.pickedAt = now(); log(o, 'picked'); }
+function undoPicked(o) { if (o.status !== 'picked' || now() - o.pickedAt > UNDO_SEC * 1000) return false; o.status = o.prevStatus || 'ready'; o.pickedAt = null; log(o, 'picked_undone'); return true; }
 
 // ---------- Cashier auth ----------
 // لوحة الكاشير وأوامرها خلف رمز سري لكل مقهى (CASHIER_PIN). الرمز الافتراضي للتجربة فقط وتظهر اللوحة تحذيرا بتغييره.
-const CASHIER_PIN = String(process.env.CASHIER_PIN || '1234');
-const PIN_IS_DEFAULT = !process.env.CASHIER_PIN;
-const CASHIER_TOKEN = crypto.createHmac('sha256', vapid.privateKey).update('cashier:' + CASHIER_PIN).digest('base64url');
+// إذا لم يضبط الرمز تبقى اللوحة مقفلة وتعرض طريقة ضبطه، ولا يوجد رمز افتراضي يمكن تخمينه من الكود المنشور
+const CASHIER_PIN = String(process.env.CASHIER_PIN || '');
+const PIN_IS_DEFAULT = !CASHIER_PIN;
+const PIN_TOO_SHORT = !!CASHIER_PIN && CASHIER_PIN.length < 6;
+const CASHIER_TOKEN = crypto.createHmac('sha256', vapid.privateKey).update('cashier:' + (CASHIER_PIN || crypto.randomBytes(16).toString('hex'))).digest('base64url');
+let globalFails = { n: 0, at: 0 };
 const loginFails = new Map();          // ip -> { n, at }
-function clientIp(req) { return String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(); }
+// Render يضيف عنوان العميل الحقيقي في آخر X-Forwarded-For، وما قبله قد يكتبه المهاجم
+const TRUST_PROXY = !!(process.env.RENDER || process.env.TRUST_PROXY);   // Render يضبط المتغير RENDER تلقائيا
+function clientIp(req) { const x = TRUST_PROXY ? String(req.headers['x-forwarded-for'] || '').split(',').map(v => v.trim()).filter(Boolean) : []; return x.length ? x[x.length - 1] : String(req.socket.remoteAddress || ''); }
 function isCashier(req) { const m = String(req.headers.cookie || '').match(/(?:^|;\s*)tj_c=([\w-]+)/); return !!m && m[1].length === CASHIER_TOKEN.length && crypto.timingSafeEqual(Buffer.from(m[1]), Buffer.from(CASHIER_TOKEN)); }
 function sameStr(a, b) { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); }
 
+// ---------- Customer tokens ----------
+// كل جهاز يفتح صفحة الطلب يحصل على مفتاح خاص بهذا الطلب في كوكي، ولا تقبل أوامر العميل (التأكيد، الإشعارات، البث) بدونه
+const MAX_CLIENTS_PER_ORDER = 3;
+function clientKey(req, o) { const m = String(req.headers.cookie || '').match(new RegExp('(?:^|;\\s*)tj_o_' + o.id + '=([a-f0-9]{24})')); return m && o.clients.has(m[1]) ? m[1] : null; }
+
 // ---------- HTTP ----------
-function send(res, code, body, type = 'text/html; charset=utf-8') { res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' }); res.end(body); }
+const SEC_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin', 'X-Frame-Options': 'DENY',
+  'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self'; connect-src 'self'; frame-ancestors 'none'" };
+function send(res, code, body, type = 'text/html; charset=utf-8') { res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', ...(type.startsWith('text/html') ? SEC_HEADERS : { 'X-Content-Type-Options': 'nosniff' }) }); res.end(body); }
 function json(res, obj, code = 200) { send(res, code, JSON.stringify(obj), 'application/json; charset=utf-8'); }
-function readBody(req) { return new Promise(r => { let b = ''; req.on('data', c => { b += c; if (b.length > 1e6) req.destroy(); }); req.on('end', () => { try { r(JSON.parse(b || '{}')); } catch { r({}); } }); }); }
-const page = (name, base = PUBLIC_URL) => fs.readFileSync(path.join(__dirname, 'public', name), 'utf8')
-  .replaceAll('{{CAFE}}', CAFE_NAME).replaceAll('{{VAPID}}', vapid.publicKey).replaceAll('{{BASE}}', base);
+function readBody(req) { return new Promise(r => { let b = '', done = false; const fin = v => { if (!done) { done = true; r(v); } };
+  req.on('data', c => { b += c; if (b.length > 16384) { fin({}); req.destroy(); } }); req.on('end', () => { try { fin(JSON.parse(b || '{}')); } catch { fin({}); } }); req.on('close', () => fin({})); }); }
+const htmlEsc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const page = (name, base = PUBLIC_URL, extra = {}) => Object.entries(extra).reduce((h, [k, v]) => h.replaceAll(`{{${k}}}`, htmlEsc(v)), fs.readFileSync(path.join(__dirname, 'public', name), 'utf8'))
+  .replaceAll('{{CAFE}}', htmlEsc(CAFE_NAME)).replaceAll('{{VAPID}}', vapid.publicKey).replaceAll('{{BASE}}', base);
 
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v16', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v17', 'text/plain');
     if (p === '/api/login' && req.method === 'POST') {
       const ip = clientIp(req), f = loginFails.get(ip);
+      if (!CASHIER_PIN) return json(res, { error: 'no_pin', msg: 'لم يضبط الرمز السري بعد. أضفه من إعدادات الخادم باسم CASHIER_PIN' }, 503);
       if (f && f.n >= 8 && now() - f.at < 15 * 60e3) return json(res, { error: 'locked', msg: 'محاولات كثيرة، حاول بعد ربع ساعة' }, 429);
+      // إبطاء عام عند كثرة المحاولات الخاطئة من عناوين مختلفة
+      if (now() - globalFails.at > 15 * 60e3) globalFails = { n: 0, at: now() };
+      if (globalFails.n > 30) await new Promise(r => setTimeout(r, Math.min(5000, (globalFails.n - 30) * 200)));
       const b = await readBody(req);
-      if (!sameStr(String(b.pin || '').trim(), CASHIER_PIN)) { loginFails.set(ip, { n: (f && now() - f.at < 15 * 60e3 ? f.n : 0) + 1, at: now() }); return json(res, { error: 'bad_pin' }, 401); }
+      if (!sameStr(String(b.pin || '').trim(), CASHIER_PIN)) { globalFails.n++; loginFails.set(ip, { n: (f && now() - f.at < 15 * 60e3 ? f.n : 0) + 1, at: now() }); return json(res, { error: 'bad_pin', msg: 'الرمز غير صحيح' }, 401); }
       loginFails.delete(ip);
       const secure = /^https/.test(BASE) ? '; Secure' : '';
       res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': `tj_c=${CASHIER_TOKEN}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 60}${secure}`, 'Cache-Control': 'no-store' });
       return res.end(JSON.stringify({ ok: true }));
     }
     if (p === '/api/logout' && req.method === 'POST') { res.writeHead(200, { 'Set-Cookie': 'tj_c=; Path=/; Max-Age=0' }); return res.end('{}'); }
-    if (p === '/api/me') return json(res, { cashier: isCashier(req), defaultPin: PIN_IS_DEFAULT });
+    if (p === '/api/me') { const c = isCashier(req); return json(res, { cashier: c, noPin: PIN_IS_DEFAULT, shortPin: c && PIN_TOO_SHORT }); }
     if (p === '/api/board') return json(res, [...orders.values()].filter(o => o.status !== 'picked' && now() - o.createdAt < 3 * 3600e3).map(boardOrder));
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
@@ -319,17 +357,25 @@ const server = http.createServer(async (req, res) => {
       const o = orders.get(m[1]);
       // طلب قديم أو منتهي، مثل فتح أيقونة الشاشة الرئيسية في زيارة جديدة: نعرض قائمة الطلبات الحالية
       if (!o || o.status === 'picked') { res.writeHead(302, { Location: '/c?app=1', 'Cache-Control': 'no-store' }); return res.end(); }
-      return send(res, 200, page('order.html'));
+      if (isCashier(req)) return send(res, 200, page('order.html', BASE, { NUMBER: o.number, OID: o.id }));
+      let key = clientKey(req, o); const headers = {};
+      if (!key) {
+        if (o.clients.size >= MAX_CLIENTS_PER_ORDER) return send(res, 409, page('busy.html', BASE, { NUMBER: o.number }));
+        key = crypto.randomBytes(12).toString('hex'); o.clients.add(key); log(o, 'client_joined', { n: o.clients.size });
+        headers['Set-Cookie'] = `tj_o_${o.id}=${key}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400${/^https/.test(BASE) ? '; Secure' : ''}`;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...SEC_HEADERS, ...headers });
+      return res.end(page('order.html', BASE, { NUMBER: o.number, OID: o.id }));
     }
     if (p === '/.well-known/apple-app-site-association') return send(res, 200, fs.readFileSync(path.join(__dirname, 'appclip/apple-app-site-association')), 'application/json');
     if (p === '/sw.js') return send(res, 200, fs.readFileSync(path.join(__dirname, 'public/sw.js')), 'text/javascript');
     if (p === '/chime.mp3') return send(res, 200, fs.readFileSync(path.join(__dirname, 'assets/chime.mp3')), 'audio/mpeg');
-    if ((m = p.match(/^\/stream\/([a-f0-9]+)$/))) { const o = orders.get(m[1]); if (!o || o.status === 'picked') return send(res, 404, ''); return startStream(o, req, res); }
+    if ((m = p.match(/^\/stream\/([a-f0-9]+)$/))) { const o = orders.get(m[1]); if (!o || o.status === 'picked') return send(res, 404, ''); const k = clientKey(req, o); if (!k) return send(res, 403, ''); return startStream(o, req, res, k, url.searchParams.get('test') === '1'); }
     if ((m = p.match(/^\/qr\/([a-f0-9]+|cafe|app)\.svg$/))) {
       const target = m[1] === 'cafe' ? `${BASE}/c` : m[1] === 'app' ? `${BASE}/app` : `${BASE}/o/${m[1]}`;
       return send(res, 200, await QRCode.toString(target, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }), 'image/svg+xml');
     }
-    if (p === '/qr.svg') return send(res, 200, await QRCode.toString(String(url.searchParams.get('text') || '').slice(0, 500), { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }), 'image/svg+xml');
+    if (p === '/qr.svg') { const tx = String(url.searchParams.get('text') || '').slice(0, 300); if (!/^WIFI:/.test(tx)) return send(res, 400, ''); return send(res, 200, await QRCode.toString(tx, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }), 'image/svg+xml'); }
     if (p === '/manifest.webmanifest') return send(res, 200, JSON.stringify({
       id: '/', name: 'طلبك جاهز', short_name: 'طلبك جاهز', lang: 'ar', dir: 'rtl', display: 'standalone', start_url: '/app', scope: '/',
       background_color: '#f6f3ee', theme_color: '#0f3d2e',
@@ -343,16 +389,17 @@ const server = http.createServer(async (req, res) => {
       if (id === 'sw') { console.log('sw event:', b.state); return json(res, { ok: true }); }
       let d = devices.get(id); if (!d) { d = { id, subs: [], phone: '', ua: String(req.headers['user-agent'] || '').slice(0, 80), createdAt: now(), log: [] }; devices.set(id, d); devLog(d, 'created'); }
       d.lastSeen = now();
-      if (b.sub && b.sub.endpoint) { if (!d.subs.some(x => x.endpoint === b.sub.endpoint)) { d.subs = [b.sub]; devLog(d, 'subscribed', { host: new URL(b.sub.endpoint).host }); } }
-      if (b.phone !== undefined) { const ph = normPhone(b.phone); if (ph !== d.phone) { d.phone = ph; devLog(d, 'phone_set', { tail: ph.slice(-4) }); } }
-      if (b.state) devLog(d, 'state', { state: String(b.state).slice(0, 80) });
+      if (b.sub && b.sub.endpoint && (validSub(b.sub) || ALLOW_TEST_PUSH_HOSTS)) { if (!d.subs.some(x => x.endpoint === b.sub.endpoint)) { d.subs = [{ endpoint: b.sub.endpoint, keys: { p256dh: b.sub.keys.p256dh, auth: b.sub.keys.auth } }]; devLog(d, 'subscribed', { host: new URL(b.sub.endpoint).host }); } }
+      if (b.phone !== undefined) { const ph = normPhone(b.phone); if (ph !== d.phone) { d.phone = ph; d.phoneVerified = ''; devLog(d, 'phone_set', { tail: ph.slice(-4) }); } }
+      if (b.state) devLog(d, 'state', { state: String(b.state).replace(/[<>]/g, '').slice(0, 80) });
       saveDevices();
-      return json(res, { ok: true, id, subscribed: d.subs.length > 0, phoneTail: d.phone.slice(-4), apple: d.subs.some(isApple) });
+      return json(res, { ok: true, id, subscribed: d.subs.length > 0, phoneTail: d.phone.slice(-4), phoneVerified: !!d.phone && d.phoneVerified === d.phone, apple: d.subs.some(isApple) });
     }
     if ((m = p.match(/^\/api\/devices\/([a-z0-9]+)\/(test|report)$/i))) {
       const d = devices.get(m[1]); if (!d) return json(res, { error: 'no_device' }, 404);
       const b = await readBody(req);
-      if (m[2] === 'report') { devLog(d, 'test_report', { result: String(b.result || '').slice(0, 40) }); d.lastTest = String(b.result || '').slice(0, 40); return json(res, { ok: true }); }
+      if (m[2] === 'report') { const r = ['ok', 'silent', 'none'].includes(b.result) ? b.result : 'other'; devLog(d, 'test_report', { result: r }); d.lastTest = r; return json(res, { ok: true }); }
+      if (d.lastTestAt && now() - d.lastTestAt < 10e3) return json(res, { ok: false, error: 'slow_down' }, 429); d.lastTestAt = now();
       if (!d.subs.length) return json(res, { ok: false, error: 'no_sub' });
       const n = { title: '✅ تجربة التنبيه', body: 'إذا سمعت صوت أو حسيت اهتزاز فكل شي تمام', tag: `test-${Date.now()}`, url: `${BASE}/app?test=1`, dev: d.id };
       const out = [];
@@ -364,6 +411,8 @@ const server = http.createServer(async (req, res) => {
     if (p === '/sticker') return send(res, 200, page('sticker.html', BASE));
     if ((m = p.match(/^\/events\/([a-f0-9]+)$/))) {
       const o = orders.get(m[1]); if (!o) return send(res, 404, '');
+      if (!clientKey(req, o) && !isCashier(req)) return send(res, 403, '');
+      if ((sseClients.get(o.id)?.size || 0) >= 6) return send(res, 429, '');
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
       if (!sseClients.has(o.id)) sseClients.set(o.id, new Set()); sseClients.get(o.id).add(res); sse(o);
       const ka = setInterval(() => res.write(': ka\n\n'), 15000);
@@ -372,24 +421,33 @@ const server = http.createServer(async (req, res) => {
     // API
     if (p.startsWith('/api/orders') && req.method === 'GET' && !isCashier(req)) return json(res, { error: 'auth' }, 401);
     if (p === '/api/orders' && req.method === 'GET') return json(res, [...orders.values()].filter(o => now() - o.createdAt < 6 * 3600e3).reverse().map(publicOrder));
-    if (p === '/api/open' && req.method === 'GET') return json(res, [...orders.values()].filter(o => o.status === 'waiting' && now() - o.createdAt < 30 * 60e3).reverse().map(o => ({ id: o.id, number: o.number })));
+    if (p === '/api/open' && req.method === 'GET') return json(res, [...orders.values()].filter(o => o.status !== 'picked' && now() - o.createdAt < 90 * 60e3).sort((a, b) => Number(a.number) - Number(b.number)).map(o => ({ number: o.number, ready: o.status === 'ready' })));
+    if (p === '/api/join' && req.method === 'POST') {
+      const b = await readBody(req); const n = String(b.number || '').trim();
+      const o = [...orders.values()].reverse().find(x => x.number === n && x.status !== 'picked' && now() - x.createdAt < 90 * 60e3);
+      if (!o) return json(res, { error: 'not_found' }, 404);
+      return json(res, { url: `/o/${o.id}` });
+    }
     if (p === '/api/orders' && req.method === 'POST') { if (!isCashier(req)) return json(res, { error: 'auth' }, 401); const b = await readBody(req); const o = newOrder(b.number, 'cashier', { phone: b.phone }); o.base = BASE; return json(res, publicOrder(o)); }
-    if ((m = p.match(/^\/api\/orders\/([a-f0-9]+)(?:\/(ready|picked|ack|push|apns|ping|test|phone|claim|table|undo))?$/))) {
+    if ((m = p.match(/^\/api\/orders\/([a-f0-9]+)(?:\/(ready|picked|ack|push|apns|ping|test|phone|claim|table|undo|unpick))?$/))) {
       const o = orders.get(m[1]); if (!o) return json(res, { error: 'not found' }, 404);
       const a = m[2]; const b = req.method === 'POST' ? await readBody(req) : {};
-      const cashier = isCashier(req);
-      if (['ready', 'picked', 'phone', 'undo'].includes(a) && !cashier) return json(res, { error: 'auth' }, 401);
+      const cashier = isCashier(req); const ck = clientKey(req, o);
+      if (['ready', 'picked', 'phone', 'undo', 'unpick'].includes(a) && !cashier) return json(res, { error: 'auth' }, 401);
+      if (['ack', 'push', 'apns', 'ping', 'test', 'claim'].includes(a) && !ck && !cashier) return json(res, { error: 'no_client' }, 403);
+      if (a === 'table' && !ck && !cashier) return json(res, { error: 'no_client' }, 403);
       if (a === 'ready') setReady(o, 'cashier');
       else if (a === 'undo') { if (!(await undoReady(o))) return json(res, { error: 'too_late' }, 409); }
       else if (a === 'picked') setPicked(o);
-      else if (a === 'ack') { if (!o.ackAt) { o.ackAt = now(); log(o, 'customer_ack'); evalAlert(o); } }
-      else if (a === 'push' && b.endpoint) { if (!o.push.some(s => s.endpoint === b.endpoint)) o.push.push(b); log(o, 'webpush_subscribed', { host: new URL(b.endpoint).host }); }
-      else if (a === 'apns' && b.token) { if (!o.apns.includes(b.token)) o.apns.push(b.token); log(o, 'apns_registered'); }
-      else if (a === 'ping') { const st = String(b.state || '').slice(0, 80); if (st === 'heard_yes') o.heard = true; markAlert(o, st); log(o, 'page', { state: st }); }
-      else if (a === 'test') { for (const st of o.streams) st.testTone = true; log(o, 'test_tone'); }
+      else if (a === 'unpick') { if (!undoPicked(o)) return json(res, { error: 'too_late' }, 409); }
+      else if (a === 'ack') { if (ck) o.acks.add(ck); if (!o.ackAt && o.status === 'ready') { o.ackAt = now(); log(o, 'customer_ack'); evalAlert(o); } }
+      else if (a === 'push' && b.endpoint) { if (!validSub(b) && !ALLOW_TEST_PUSH_HOSTS) return json(res, { error: 'bad_endpoint' }, 400); if (!o.push.some(s => s.endpoint === b.endpoint) && o.push.length < 3) o.push.push({ endpoint: b.endpoint, keys: { p256dh: b.keys.p256dh, auth: b.keys.auth } }); log(o, 'webpush_subscribed', { host: new URL(b.endpoint).host }); }
+      else if (a === 'apns' && /^[a-f0-9]{64,200}$/i.test(String(b.token || ''))) { if (!o.apns.includes(b.token) && o.apns.length < 3) o.apns.push(String(b.token)); log(o, 'apns_registered'); }
+      else if (a === 'ping') { const st = String(b.state || '').replace(/[<>]/g, '').slice(0, 80); if (st === 'heard_yes') o.heard = true; markAlert(o, st); log(o, 'page', { state: st }); }
+      else if (a === 'test') { for (const st of o.streams) if (st.key === ck) st.testTone = true; log(o, 'test_tone'); }
       else if (a === 'phone') { o.phone = normPhone(b.phone); log(o, 'phone_set', { tail: o.phone.slice(-4), linked: devicesForOrder(o).length }); }
       else if (a === 'table') { o.table = String(b.table || '').replace(/[^0-9A-Za-z\u0600-\u06FF ]/g, '').slice(0, 12); log(o, 'table_set', { table: o.table }); }
-      else if (a === 'claim' && b.device && devices.has(String(b.device))) { o.devices.add(String(b.device)); log(o, 'device_claimed', { linked: devicesForOrder(o).length }); }
+      else if (a === 'claim' && b.device && devices.has(String(b.device))) { const dv = devices.get(String(b.device)); if (o.phone && dv.phone === o.phone && dv.phoneVerified !== o.phone) { dv.phoneVerified = o.phone; devLog(dv, 'phone_verified'); } o.devices.add(String(b.device)); log(o, 'device_claimed', { linked: devicesForOrder(o).length }); }
       return json(res, cashier ? publicOrder(o) : customerOrder(o));
     }
     // تكامل Foodics (هيكل مبدئي): ينشئ الطلب عند وصول حدث إنشاء، ويعلن الجاهزية عند وصول حالة "منتهٍ".
@@ -407,7 +465,15 @@ const server = http.createServer(async (req, res) => {
     send(res, 404, 'Not found');
   } catch (e) { console.error(e); send(res, 500, 'error'); }
 });
+// تنظيف دوري: الطلبات الأقدم من 12 ساعة، ومحاولات الدخول القديمة، والجوالات غير المستخدمة منذ 90 يوما
+setInterval(() => {
+  for (const [id, o] of orders) if (now() - o.createdAt > 12 * 3600e3 && !o.streams.size) { clearInterval(o.repeatTimer); orders.delete(id); sseClients.delete(id); }
+  for (const [ip, f] of loginFails) if (now() - f.at > 15 * 60e3) loginFails.delete(ip);
+  let pruned = false; for (const [id, d] of devices) if (now() - (d.lastSeen || d.createdAt || 0) > 90 * 864e5) { devices.delete(id); pruned = true; }
+  if (pruned) saveDevices();
+}, 3600e3);
 server.keepAliveTimeout = 120000;
+server.headersTimeout = 30000;
 server.requestTimeout = 0;
 server.listen(PORT, () => console.log(`الخادم يعمل محليا على http://localhost:${PORT}/cashier`));
 module.exports = { setPublicUrl, server };

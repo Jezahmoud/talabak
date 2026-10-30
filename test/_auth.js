@@ -8,8 +8,10 @@ globalThis.fetch = async (u, opt = {}) => {
   const s = String(u);
   if (/^http:\/\/localhost/.test(s) && !/\/api\/login$/.test(s)) {
     if (!cookie) { pending = pending || login(new URL(s).origin); await pending; }
-    opt = { ...opt, headers: { ...(opt.headers || {}), Cookie: cookie } };
+    if (!(opt.headers && opt.headers.Cookie)) opt = { ...opt, headers: { ...(opt.headers || {}), Cookie: cookie } };
   }
   return orig(u, opt);
 };
-module.exports = { getCookie: () => cookie };
+// يفتح صفحة الطلب كعميل (بدون كوكي الكاشير) ويعيد كوكي العميل الخاص بهذا الطلب
+async function customerCookie(base, id) { const r = await orig(`${base}/o/${id}`, { redirect: 'manual' }); return (r.headers.get('set-cookie') || '').split(';')[0]; }
+module.exports = { getCookie: () => cookie, customerCookie };

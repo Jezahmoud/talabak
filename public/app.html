@@ -57,7 +57,7 @@
     <h2>التنبيه على هذا الجوال</h2>
     <p id="pstat">لما يجهز طلبك يجيك إشعار يرن ويهتز ويضيء الشاشة، حتى والجوال مقفل في جيبك.</p>
     <button class="big" id="enable">فعّل التنبيه (مرة واحدة)</button>
-    <div class="tip hidden" id="denied">الإشعارات مرفوضة لهذا التطبيق. افتح الإعدادات، ثم الإشعارات، ثم «طلبك جاهز»، وفعّل «السماح بالإشعارات».</div>
+    <div class="tip hidden" id="denied"><span class="ios-only">الإشعارات مرفوضة لهذا التطبيق. افتح الإعدادات، ثم الإشعارات، ثم «طلبك جاهز»، وفعّل «السماح بالإشعارات».</span><span class="android-only">الإشعارات مرفوضة. اضغط القفل جنب الرابط، ثم الأذونات، ثم الإشعارات، واختر «سماح».</span></div>
   </section>
 
   <section class="card hidden" id="testcard">
@@ -76,11 +76,11 @@
       <span class="ios-only">وصل صامت؟ تأكد من ثلاثة أشياء في جوالك:<br>
       ١. الإعدادات ← الإشعارات ← «طلبك جاهز» ← فعّل «الأصوات».<br>
       ٢. الإعدادات ← الأصوات والحس اللمسي ← «الحس اللمسي» ← «تشغيل دائما».<br>
-      ٣. أقفل وضع التركيز أو عدم الإزعاج، ثم أعد التجربة.</span>
+      ٣. اقفل وضع التركيز أو عدم الإزعاج، ثم أعد التجربة.</span>
       <span class="android-only">وصل صامت؟ تأكد من ثلاثة أشياء في جوالك:<br>
       ١. الجوال مو على وضع «صامت». خله على «رنين» أو «اهتزاز» (في OnePlus من مفتاح التنبيه الجانبي أو من لوحة الإعدادات السريعة).<br>
       ٢. اضغط مطولا على إشعار التجربة ← ⚙ الإعدادات ← فعّل «الصوت» و«الاهتزاز» و«العرض على شاشة القفل».<br>
-      ٣. أقفل وضع عدم الإزعاج، ثم أعد التجربة.</span>
+      ٣. اقفل وضع عدم الإزعاج، ثم أعد التجربة.</span>
     </div>
     <div class="tip hidden" id="fix_none">
       <span class="ios-only">ما وصل؟ تأكد إن الجوال متصل بالإنترنت وإن الإشعارات مسموحة لـ «طلبك جاهز» في الإعدادات، ثم أعد التجربة.</span>
@@ -90,7 +90,8 @@
 
   <section class="card hidden" id="phonecard">
     <h2>بدون ما تفتح التطبيق أبدا</h2>
-    <p>إذا سجلت رقم جوالك، يربط المقهى طلبك بجوالك تلقائيا من الكاشير، ويوصلك التنبيه بدون ما تمسح أي رمز.</p>
+    <p>إذا سجلت رقم جوالك، يربط المقهى طلبك بجوالك تلقائيا لما تعطيه رقمك، ويوصلك التنبيه بدون ما تمسح أي رمز. يتفعل الربط بعد أول طلب تفتحه بنفس الرقم.</p>
+    <p style="font-size:13px">نستخدم رقمك لإرسال تنبيه جاهزية طلبك فقط، ولا نرسل لك أي رسائل تسويقية، وتقدر تحذفه متى ما بغيت.</p>
     <div id="phoneform">
       <input id="phone" type="tel" inputmode="numeric" placeholder="05xxxxxxxx" autocomplete="tel">
       <button class="big" id="savephone" style="margin-top:8px">احفظ الرقم</button>
@@ -99,8 +100,8 @@
   </section>
 
   <section class="card hidden" id="orders">
-    <h2>طلباتك الآن في {{CAFE}}</h2>
-    <p>اضغط رقم طلبك المطبوع في الفاتورة.</p>
+    <h2>الطلبات قيد التحضير في {{CAFE}}</h2>
+    <p>اضغط الرقم اللي عطاك إياه الكاشير.</p>
     <div class="grid" id="g"></div>
   </section>
 
@@ -179,19 +180,24 @@ $('r_ok').onclick = () => report('ok'); $('r_silent').onclick = () => report('si
 
 // ---- الرقم
 const savedPhone = localStorage.getItem('talabak_phone');
-if (savedPhone) { $('phoneform').classList.add('hidden'); $('phoneok').classList.remove('hidden'); $('phoneok').textContent = '✅ مربوط برقم ينتهي بـ ' + savedPhone.slice(-4); }
+function phoneSaved(tail) { $('phoneform').classList.add('hidden'); $('phoneok').classList.remove('hidden'); $('phoneok').innerHTML = '✅ مربوط برقم ينتهي بـ ' + tail + ' <button class="big ghost" id="delphone" style="margin-top:8px;padding:10px">حذف الرقم</button>'; $('delphone').onclick = async () => { localStorage.removeItem('talabak_phone'); await reg({ phone: '' }); $('phoneok').classList.add('hidden'); $('phoneform').classList.remove('hidden'); }; }
+if (savedPhone) phoneSaved(savedPhone.slice(-4));
 $('savephone').onclick = async () => {
   const v = $('phone').value.replace(/\D/g, ''); if (v.length < 9) { $('phone').focus(); return; }
   localStorage.setItem('talabak_phone', v); const r = await reg({ phone: v });
-  $('phoneform').classList.add('hidden'); $('phoneok').classList.remove('hidden'); $('phoneok').textContent = '✅ مربوط برقم ينتهي بـ ' + (r.phoneTail || v.slice(-4));
+  phoneSaved(r.phoneTail || v.slice(-4));
 };
 
 // ---- الطلبات المفتوحة
 async function loadOrders() {
-  try { const l = await (await fetch('/api/open')).json();
-    $('g').innerHTML = l.length ? l.map(o => `<a href="/o/${o.id}?app=1${qs.get("force") === "1" ? "&force=1" : ""}" data-id="${o.id}">${o.number}</a>`).join('') : '<div style="grid-column:1/-1;color:var(--muted)">لا توجد طلبات قيد التحضير الآن</div>';
-    $('g').querySelectorAll('a').forEach(a => a.addEventListener('click', e => { e.preventDefault(); post(`/api/orders/${a.dataset.id}/claim`, { device: devId }).finally(() => location.href = a.href); }));
-  } catch {}
+  try { const l = await (await fetch('/api/open', { cache: 'no-store' })).json();
+    $('g').innerHTML = l.length ? '' : '<div style="grid-column:1/-1;color:var(--muted)">لا توجد طلبات قيد التحضير الآن</div>';
+    for (const o of l) { const a = document.createElement('a'); a.href = '#'; a.textContent = o.number;
+      a.onclick = async e => { e.preventDefault(); if (!confirm('رقم طلبك ' + o.number + '؟')) return;
+        const r = await post('/api/join', { number: o.number }).catch(() => ({}));
+        if (r.url) location.href = r.url + '?app=1' + (qs.get('force') === '1' ? '&force=1' : ''); };
+      $('g').appendChild(a); }
+  } catch { $('g').innerHTML = '<div style="grid-column:1/-1;color:var(--warn)">تعذر الاتصال، تأكد من الإنترنت</div>'; }
 }
 if (!$('orders').classList.contains('hidden')) { loadOrders(); setInterval(loadOrders, 3000); }
 document.querySelectorAll(IOS ? '.android-only' : '.ios-only').forEach(x => x.remove());

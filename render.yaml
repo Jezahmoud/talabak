@@ -11,6 +11,8 @@ services:
         value: مقهى التجربة
       - key: VAPID_SEED
         generateValue: true
+      - key: PUBLIC_URL
+        value: https://talabak-jahiz.onrender.com
       # الرمز السري للوحة الكاشير. اكتب قيمته من لوحة Render (Environment) ولا تضعه هنا
       - key: CASHIER_PIN
         sync: false

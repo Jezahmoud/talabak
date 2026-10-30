@@ -22,12 +22,14 @@
 </head>
 <body>
 <div class="wrap">
-  <form method="get" class="noprint">
+  <form class="noprint" id="sf">
     <div class="mu">يطبع هذا الملصق ويوضع على الكاونتر. يغني عن طباعة رمز لكل طلب، ويخدم العميل الذي ليس معه إنترنت عبر شبكة المقهى.</div>
     <label>اسم شبكة الواي فاي في المقهى</label><input name="ssid" id="ssid" placeholder="CafeWiFi">
     <label>كلمة المرور</label><input name="pass" id="pass" placeholder="اتركها فارغة إذا كانت الشبكة مفتوحة">
     <button>جهز الملصق</button>
-  </form>
+    <button type="button" onclick="window.print()" style="background:#fff;color:#0f3d2e;border:2px solid #0f3d2e">اطبع الملصق</button>
+</form>
+<script>document.getElementById('sf').onsubmit = e => { e.preventDefault(); location.hash = new URLSearchParams({ ssid: document.getElementById('ssid').value, pass: document.getElementById('pass').value }).toString(); location.reload(); };</script>
   <div class="sticker" id="st">
     <h1>{{CAFE}}</h1>
     <p>جوالك يرن عند جاهزية طلبك، بدون تطبيق</p>
@@ -38,21 +40,21 @@
         <div class="mu" id="wifitxt"></div>
       </div>
       <div class="box">
-        <div class="step">سجّل جوالك مرة وحدة</div>
-        <img src="/qr/app.svg" alt="">
-        <div class="mu">بعدها يهتز جوالك ويضيء لما يجهز طلبك، في كل زيارة بدون أي خطوة</div>
-      </div>
-      <div class="box">
         <div class="step" id="s2">٢. اختر رقم طلبك</div>
         <img src="/qr/cafe.svg" alt="">
         <div class="mu">امسح بالكاميرا، اضغط رقم طلبك ثم «نبهني»</div>
       </div>
+      <div class="box">
+        <div class="step">اختياري: سجّل جوالك مرة وحدة</div>
+        <img src="/qr/app.svg" alt="">
+        <div class="mu">بعدها يهتز جوالك ويضيء لما يجهز طلبك، في كل زيارة بدون أي خطوة</div>
+      </div>
     </div>
   </div>
-  <p class="mu noprint" style="text-align:center;margin-top:12px">للطباعة استخدم زر المشاركة ثم طباعة.</p>
+  
 </div>
 <script>
-const q = new URLSearchParams(location.search), ssid = q.get('ssid') || '', pass = q.get('pass') || '';
+const q = new URLSearchParams(location.hash.slice(1) || location.search), ssid = q.get('ssid') || '', pass = q.get('pass') || '';
 document.getElementById('ssid').value = ssid; document.getElementById('pass').value = pass;
 const esc = v => v.replace(/([\\;,:"])/g, '\\$1');
 if (ssid) {

@@ -22,14 +22,17 @@
   .ch .g { color:var(--ok); font-weight:700; } .ch .w { color:var(--warn); font-weight:700; } .ch .b { color:var(--bad); font-weight:700; }
   .acts { grid-column:1/-1; display:flex; gap:8px; }
   .acts button { flex:1; }
-  .r { background:var(--ok); color:#fff; } .p { background:#e9e5dd; color:#333; }
+  .btn-ready { background:var(--ok); color:#fff; } .btn-plain { background:#e9e5dd; color:#333; }
   .tl { font-size:14px; font-weight:700; margin:4px 0; } .tl.g { color:var(--ok); } .tl.y { color:var(--warn); } .tl.r { color:var(--bad); }
   #login { position:fixed; inset:0; background:#f6f3ee; z-index:50; display:flex; align-items:center; justify-content:center; }
   #login form { background:#fff; border-radius:20px; padding:28px; width:min(92vw,360px); display:grid; gap:12px; text-align:center; }
   #login input { font:28px Tahoma; padding:12px; border:1px solid #ccc; border-radius:12px; text-align:center; letter-spacing:6px; direction:ltr; }
   #offline { position:sticky; top:0; z-index:40; background:var(--bad); color:#fff; font-weight:800; text-align:center; padding:12px; }
   #pinwarn { background:#fff1dc; color:#8a5a12; padding:10px 20px; font-size:14px; font-weight:700; }
-  .u { background:#fff; color:var(--bad); border:2px solid var(--bad); }
+  .btn-undo { background:#fff; color:var(--bad); border:2px solid var(--bad); }
+  .sec { padding:4px 20px; color:var(--muted); font-weight:700; } summary.sec { cursor:pointer; }
+  .card.fresh { outline:3px solid var(--ok); }
+  #toast { position:fixed; bottom:20px; inset-inline:0; margin:auto; width:max-content; max-width:90vw; background:#13201b; color:#fff; padding:12px 18px; border-radius:12px; font-weight:700; z-index:60; }
   .hidden { display:none !important; }
   details { grid-column:1/-1; font-size:12px; color:var(--muted); } details pre { white-space:pre-wrap; margin:6px 0 0; direction:ltr; text-align:left; }
 </style>
@@ -43,18 +46,20 @@
   <div id="lerr" style="color:var(--bad);font-weight:700"></div>
 </form></div>
 <div id="offline" class="hidden">⚠️ انقطع الاتصال بالخادم. نادِ العملاء يدويا حتى يعود الاتصال</div>
-<div id="pinwarn" class="hidden">تنبيه: اللوحة تستخدم الرمز الافتراضي. غيّره من إعدادات الخادم (CASHIER_PIN) قبل التشغيل الفعلي.</div>
+<div id="pinwarn" class="hidden">تنبيه: الرمز السري أقل من 6 أرقام. غيّره من إعدادات الخادم (CASHIER_PIN) قبل التشغيل الفعلي.</div>
+<div id="toast" class="hidden"></div>
 <div class="top">
   <h1>{{CAFE}} — لوحة الكاشير</h1>
   <div class="cafeqr"><img src="/qr/cafe.svg" alt=""><div>رمز ثابت للمقهى<br>يختار منه العميل رقم طلبه</div></div>
   <div class="cafeqr"><img src="/qr/app.svg" alt=""><div>رمز التسجيل مرة واحدة<br>يخلي الجوال يهتز ويضيء</div></div>
   <a href="/sticker" target="_blank" style="font:700 15px Tahoma;color:#0f3d2e;padding:10px">ملصق الكاونتر مع رمز الواي فاي</a>
   <a href="/board" target="_blank" style="font:700 15px Tahoma;color:#0f3d2e;padding:10px">شاشة الطلبات للكاونتر</a>
-  <span style="display:inline-flex;gap:6px;align-items:center"><input id="phone" type="tel" placeholder="جوال العميل (اختياري)" style="font:16px Tahoma;padding:10px;border:1px solid #ccc;border-radius:10px;width:190px;direction:ltr"><button class="new" id="new">طلب جديد</button></span>
+  <span style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap"><input id="num" inputmode="numeric" placeholder="رقم الفاتورة (اختياري)" style="font:16px Tahoma;padding:10px;border:1px solid #ccc;border-radius:10px;width:170px"><input id="phone" type="tel" placeholder="جوال العميل (اختياري)" style="font:16px Tahoma;padding:10px;border:1px solid #ccc;border-radius:10px;width:170px;direction:ltr"><button class="new" id="new">طلب جديد</button></span>
   <span id="devs" style="font:14px Tahoma;color:#5b6b64"></span>
-  <button class="p" id="logout" style="font-size:14px;padding:8px 12px">خروج</button>
+  <button class="btn-plain" id="logout" style="font-size:14px;padding:8px 12px">خروج</button>
 </div>
 <div class="list" id="list"></div>
+<details id="pickedbox"><summary class="sec" id="pickedsum">المسلّمة</summary><div class="list" id="picked"></div></details>
 <script>
 const $ = s => document.getElementById(s);
 const post = (u, b) => fetch(u, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(b||{}) }).then(r => { if (r.status === 401) showLogin(); return r.json(); });
@@ -63,9 +68,14 @@ $('lf').onsubmit = async e => { e.preventDefault(); $('lerr').textContent = '';
   const r = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ pin: $('pin').value }) });
   if (r.ok) { $('login').classList.add('hidden'); $('pin').value = ''; boot(); }
   else { const d = await r.json().catch(() => ({})); $('lerr').textContent = d.msg || 'الرمز غير صحيح'; } };
+async function act(id, a, body) { const r = await fetch(`/api/orders/${id}/${a}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{}) });
+  if (r.status === 401) return showLogin(); if (r.status === 409) toast('انتهت مهلة التراجع'); load(); }
 $('logout').onclick = () => fetch('/api/logout', { method:'POST' }).then(() => location.reload());
 function esc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c])); }
-$('new').onclick = () => post('/api/orders', { phone: $('phone').value }).then(() => { $('phone').value = ''; load(); });
+let freshId = null;
+$('new').onclick = () => post('/api/orders', { phone: $('phone').value, number: $('num').value.trim() || undefined }).then(o => { $('phone').value = ''; $('num').value = ''; freshId = o && o.id; toast('طلب جديد رقم ' + (o && o.number)); load(); });
+function toast(t) { $('toast').textContent = t; $('toast').classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => $('toast').classList.add('hidden'), 2500); }
+const DEBUG = new URLSearchParams(location.search).get('debug') === '1';
 const LBL = { waiting:'قيد التحضير', ready:'جاهز', picked:'تم التسليم' };
 function audioState(o) {
   if (!o.streams.length) return '<span class="w">لا يوجد بث صوتي متصل</span>';
@@ -79,12 +89,13 @@ function alertLine(o) {
   const a = o.alert, age = Math.round((Date.now() - o.readyAt) / 1000);
   const cls = a.level === -1 ? 'g' : a.level === 2 ? 'r' : a.level === 1 ? 'y' : 'g';
   const ico = a.level === -1 ? '✅' : a.level === 2 ? '🔴' : a.level === 1 ? '⏳' : '🔔';
-  return `<div class="tl ${cls}">${ico} ${a.note} (${age} ث)</div>`;
+  return `<div class="tl ${cls}">${ico} ${esc(a.note)} (${o.readyAgeSec ?? age} ث)</div>`;
 }
 function reach(o) {
   if (o.status === 'ready') return alertLine(o) + (o.table ? `<div class="tl g">🪑 طاولة ${esc(o.table)}</div>` : '');
   if (o.table) return `<div class="tl g">🪑 طاولة ${esc(o.table)}: وصّل الطلب للطاولة، لا يحتاج تنبيها</div>`;
   if (o.status !== 'waiting') return '';
+  if (!o.streams.length && !o.linkedDevices && !o.pushCount && o.createdAgeSec < 120) return '<div class="tl">⏳ بانتظار أن يمسح العميل الرمز</div>';
   const live = o.streams.some(s => !(s.blocked && s.lastDrainAgoSec > 8));
   if (o.linkedDevices || o.pushCount) return '<div class="tl g">🟢 يرن ويهتز حتى والجوال مقفل</div>';
   if (live) return '<div class="tl y">🟡 صوت فقط' + (o.heard ? '' : '، ولم يؤكد أنه يسمع') + '. إذا كان صوته مقفلا فأرشده لشاشة الطلبات</div>';
@@ -92,44 +103,51 @@ function reach(o) {
 }
 function card(o) {
   const t = new Date(o.createdAt).toLocaleTimeString('ar-SA', { hour:'2-digit', minute:'2-digit' });
-  const ev = o.events.map(e => `${new Date(e.t).toLocaleTimeString('en-GB')}  ${e.type}${Object.keys(e).length>2?' '+JSON.stringify(Object.fromEntries(Object.entries(e).filter(([k])=>k!=='t'&&k!=='type'))):''}`).join('\n');
-  return `<div class="card">
+  const ev = DEBUG ? esc(o.events.map(e => `${new Date(e.t).toLocaleTimeString('en-GB')}  ${e.type}${Object.keys(e).length>2?' '+JSON.stringify(Object.fromEntries(Object.entries(e).filter(([k])=>k!=='t'&&k!=='type'))):''}`).join('\n')) : '';
+  return `<div class="card${o.id === freshId ? ' fresh' : ''}" data-id="${o.id}">
     <a href="/o/${o.id}" target="_blank"><img src="/qr/${o.id}.svg" alt=""></a>
-    <div><div><span class="n">${o.number}</span><span class="st ${o.status}">${LBL[o.status]}</span></div>${reach(o)}
-      <div class="ch">${t} · ${audioState(o)}<br>
+    <div><div><span class="n">${esc(o.number)}</span><span class="st ${o.status}">${LBL[o.status]}</span></div>${reach(o)}
+      <div class="ch">${t}${o.clients > 1 ? ` · <span class="w">${o.clients} أجهزة على هذا الطلب</span>` : ''}${DEBUG ? ' · ' + audioState(o) : ''}<br>
         جوال العميل: ${o.linkedDevices ? `<span class="g">مسجل ✅ يوصله إشعار يرن ويهتز</span>` : (o.phoneTail ? `<span class="w">…${o.phoneTail} غير مسجل</span>` : 'لم يُدخل')}<br>
-        الصوت: ${o.heard ? '<span class="g">العميل أكد أنه سمع</span>' : '<span class="w">لم يؤكد</span>'} · اهتزاز: ${o.pushCount ? `<span class="g">مفعل${o.pushApple ? ' (ايفون)' : ''}</span>` : 'لا'} · App Clip: ${o.apnsCount ? '<span class="g">مسجل</span>' : 'لا'}
+        ${o.streams.length || o.pushCount ? `الصوت: ${o.heard ? '<span class="g">العميل أكد أنه يسمع</span>' : '<span class="w">لم يؤكد</span>'} · إشعار: ${o.pushCount ? '<span class="g">مفعل</span>' : 'لا'}` : ''}${DEBUG ? ` · App Clip: ${o.apnsCount ? 'مسجل' : 'لا'}` : ''}
         ${o.reactionSec != null ? `<br>استجاب العميل بعد <span class="g">${o.reactionSec} ث</span> من إعلان الجاهزية` : ''}</div></div>
     <div class="acts">
-      ${o.status==='waiting' ? `<button class="r" onclick="post('/api/orders/${o.id}/ready').then(load)">جاهز</button>` : ''}
-      ${o.status==='ready' && Date.now() - o.readyAt < 20000 ? `<button class="u" onclick="post('/api/orders/${o.id}/undo').then(load)">تراجع (ضغطته بالغلط)</button>` : ''}
-      ${o.status!=='picked' && !o.table ? `<button class="p" onclick="const t=prompt('رقم الطاولة'); if(t) post('/api/orders/${o.id}/table',{table:t}).then(load)">طاولة</button>` : ''}
-      ${o.status!=='picked' ? `<button class="p" onclick="post('/api/orders/${o.id}/picked').then(load)">تم التسليم</button>` : ''}
+      ${o.status==='waiting' ? `<button class="btn-ready" onclick="act('${o.id}','ready')">جاهز</button>` : ''}
+      ${o.status==='ready' && (o.readyAgeSec ?? 99) < 20 ? `<button class="btn-undo" onclick="act('${o.id}','undo')">تراجع (ضغطته بالغلط)</button>` : ''}
+      ${o.status!=='picked' && !o.table ? `<button class="btn-plain" onclick="const t=prompt('رقم الطاولة'); if(t) act('${o.id}','table',{table:t})">طاولة</button>` : ''}
+      ${o.status!=='picked' ? `<button class="btn-plain" onclick="act('${o.id}','picked')">تم التسليم</button>` : ''}
+      ${o.status==='picked' && (o.pickedAgeSec ?? 99) < 20 ? `<button class="btn-undo" onclick="act('${o.id}','unpick')">تراجع عن التسليم</button>` : ''}
     </div>
-    <details><summary>سجل الأحداث</summary><pre>${ev}</pre></details>
+    ${DEBUG ? `<details><summary>سجل الأحداث</summary><pre>${ev}</pre></details>` : ''}
   </div>`;
 }
-let openDetails = new Set();
+let lastHtml = '', lastPicked = '';
 let fails = 0;
 async function load() {
-  document.querySelectorAll('details[open]').forEach(d => openDetails.add(d.parentElement.querySelector('a').href));
   let l;
   try { const r = await fetch('/api/orders', { cache: 'no-store' }); if (r.status === 401) { showLogin(); return; } l = await r.json(); fails = 0; $('offline').classList.add('hidden'); }
   catch { if (++fails >= 2) $('offline').classList.remove('hidden'); return; }
-  $('list').innerHTML = l.map(card).join('');
-  document.querySelectorAll('.card').forEach(c => { if (openDetails.has(c.querySelector('a').href)) c.querySelector('details').open = true; });
-  openDetails = new Set();
+  const rank = { ready: 0, waiting: 1 };
+  const active = l.filter(o => o.status !== 'picked' || (o.pickedAgeSec ?? 99) < 20).sort((a, b) => (rank[a.status] ?? 2) - (rank[b.status] ?? 2) || b.createdAt - a.createdAt);
+  const done = l.filter(o => o.status === 'picked' && (o.pickedAgeSec ?? 99) >= 20);
+  // لا نعيد رسم القائمة إلا إذا تغير شيء، حتى لا تضيع ضغطات الموظف
+  const html = active.length ? active.map(card).join('') : '<div class="sec">لا توجد طلبات الآن. اضغط «طلب جديد» عند كل طلب.</div>';
+  if (html !== lastHtml) { $('list').innerHTML = html; lastHtml = html; }
+  $('pickedsum').textContent = `المسلّمة (${done.length})`;
+  if ($('pickedbox').open) { const ph = done.map(card).join(''); if (ph !== lastPicked) { $('picked').innerHTML = ph; lastPicked = ph; } }
 }
 const TR = { ok: 'وصل بصوت أو اهتزاز ✅', silent: 'وصل بدون صوت', none: 'ما وصل' };
 async function loadDevs() { try { const r = await fetch('/api/devices'); if (!r.ok) return; const d = await r.json();
-  $('devs').innerHTML = `جوالات مسجلة: <b>${d.filter(x=>x.subs).length}</b>` + d.map(x => `<br>${x.apple ? 'ايفون' : 'أندرويد'} ${x.phoneTail ? '…' + x.phoneTail : 'بدون رقم'} · ${x.subs ? 'مشترك' : 'غير مشترك'} · ${x.log.some(e=>e.state==='sw_notification_shown') ? 'عرض الإشعار ✅' : ''} ${x.lastTest ? '· رأي العميل: ' + (TR[x.lastTest] || x.lastTest) : ''}`).join(''); } catch {} }
+  $('devs').innerHTML = `جوالات مسجلة: <b>${d.filter(x=>x.subs).length}</b>` + (DEBUG ? d.slice(-20).map(x => `<br>${x.apple ? 'ايفون' : 'أندرويد'} ${x.phoneTail ? '…' + esc(x.phoneTail) : 'بدون رقم'} · ${x.subs ? 'مشترك' : 'غير مشترك'} ${x.lastTest ? '· رأي العميل: ' + esc(TR[x.lastTest] || x.lastTest) : ''}`).join('') : ''); } catch {} }
 let timers = [];
 async function boot() {
   const me = await fetch('/api/me').then(r => r.json()).catch(() => ({}));
+  if (me.noPin) { $('lerr').textContent = 'لم يضبط الرمز السري بعد. أضفه في إعدادات الخادم باسم CASHIER_PIN ثم أعد التحميل.'; }
   if (!me.cashier) return showLogin();
-  $('pinwarn').classList.toggle('hidden', !me.defaultPin);
+  $('pinwarn').classList.toggle('hidden', !me.shortPin);
   timers.forEach(clearInterval); load(); loadDevs(); timers = [setInterval(load, 1500), setInterval(loadDevs, 5000)];
 }
+$('pickedbox').ontoggle = () => { lastPicked = ''; load(); };
 boot();
 </script>
 </body>
