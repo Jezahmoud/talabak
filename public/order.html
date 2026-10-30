@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0f3d2e">
-<link rel="manifest" href="/manifest.webmanifest">
+<link rel="manifest" id="mf" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="طلبك جاهز">
@@ -54,11 +54,12 @@
     <br>الصوت الذي يتحكم في التنبيه هو صوت الوسائط، وليس صوت الرنين.
   </div>
   <div class="note warn hidden" id="vib">
+    <b>عندك «طلبك جاهز» على الشاشة الرئيسية؟</b> افتحه واضغط رقم طلبك <b class="n"></b> ثم «نبهني».<br><br>
     <b>تبي جوالك يهتز حتى لو الصوت مقفول؟</b><br>
     مرة وحدة فقط وتنفع في كل زيارة:<br>
     ١. اضغط زر المشاركة في Safari (وإذا ما لقيته اضغط النقاط الثلاث ثم مشاركة)<br>
     ٢. اختر «إضافة إلى الشاشة الرئيسية» ثم «إضافة»<br>
-    ٣. افتح «طلبك جاهز» من الشاشة الرئيسية، اضغط رقم طلبك ثم «نبهني» ووافق على الإشعارات
+    ٣. افتح «طلبك جاهز» من الشاشة الرئيسية، بيفتح على طلبك نفسه، اضغط «نبهني» ووافق على الإشعارات
   </div>
   <div class="note warn hidden" id="paused">
     توقف التنبيه الصوتي. اضغط الزر أدناه لإعادة تفعيله.
@@ -77,6 +78,7 @@ const VAPID = '{{VAPID}}';
 const $ = s => document.getElementById(s);
 const player = $('player');
 const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+document.getElementById('mf').href = '/manifest.webmanifest?o=' + id;   // الأيقونة تفتح على نفس الطلب مباشرة
 const STANDALONE = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 let armed = false, pushOn = false, status = 'waiting', number = '';
 
@@ -101,7 +103,11 @@ async function enablePush() {
     const reg = await navigator.serviceWorker.register('/sw.js');
     const perm = await Notification.requestPermission();
     if (perm !== 'granted') { api('ping', { state:'push_'+perm }); return false; }
-    const sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: b64ToU8(VAPID) });
+    const key = b64ToU8(VAPID);
+    let sub = await reg.pushManager.getSubscription();
+    if (sub) { const k = sub.options && sub.options.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
+      if (!k || k.length !== key.length || k.some((v, i) => v !== key[i])) { await sub.unsubscribe().catch(()=>{}); sub = null; } }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: key });
     await api('push', sub.toJSON()); return true;
   } catch(e) { api('ping', { state:'push_err' }); return false; }
 }
@@ -139,7 +145,7 @@ $('rearm').onclick = () => { startAudio().catch(()=>{}); };
 $('ack').onclick = () => { api('ack'); $('ack').classList.add('hidden'); document.body.classList.remove('ready'); $('status').textContent = 'بانتظارك عند الكاشير'; };
 
 function render() {
-  $('num').textContent = number;
+  $('num').textContent = number; document.querySelectorAll('.n').forEach(x => x.textContent = number);
   if (status === 'ready') {
     $('status').textContent = 'طلبك جاهز، تفضل بالاستلام';
     document.body.classList.add('ready'); $('ack').classList.remove('hidden'); $('arm').classList.add('hidden');

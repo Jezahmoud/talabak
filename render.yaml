@@ -9,3 +9,5 @@ services:
     envVars:
       - key: CAFE_NAME
         value: مقهى التجربة
+      - key: VAPID_SEED
+        generateValue: true

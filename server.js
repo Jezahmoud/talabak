@@ -24,7 +24,12 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 // ---------- VAPID (Web Push) ----------
 const vapidFile = path.join(DATA_DIR, 'vapid.json');
 let vapid;
-if (fs.existsSync(vapidFile)) vapid = JSON.parse(fs.readFileSync(vapidFile, 'utf8'));
+// مفاتيح ثابتة لا تتغير عند إعادة تشغيل السيرفر، حتى لا تنقطع اشتراكات جوالات العملاء
+if (process.env.VAPID_SEED) {
+  const ecdh = require('crypto').createECDH('prime256v1');
+  ecdh.setPrivateKey(require('crypto').createHash('sha256').update(process.env.VAPID_SEED).digest());
+  vapid = { publicKey: ecdh.getPublicKey().toString('base64url'), privateKey: ecdh.getPrivateKey().toString('base64url') };
+} else if (fs.existsSync(vapidFile)) vapid = JSON.parse(fs.readFileSync(vapidFile, 'utf8'));
 else { vapid = webpush.generateVAPIDKeys(); fs.writeFileSync(vapidFile, JSON.stringify(vapid)); }
 webpush.setVapidDetails('mailto:poc@example.com', vapid.publicKey, vapid.privateKey);
 
@@ -180,10 +185,15 @@ const page = (name, base = PUBLIC_URL) => fs.readFileSync(path.join(__dirname, '
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v4', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v5', 'text/plain');
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
-    if ((m = p.match(/^\/o\/([a-f0-9]+)$/))) return orders.has(m[1]) ? send(res, 200, page('order.html')) : send(res, 404, 'الطلب غير موجود');
+    if ((m = p.match(/^\/o\/([a-f0-9]+)$/))) {
+      const o = orders.get(m[1]);
+      // طلب قديم أو منتهي، مثل فتح أيقونة الشاشة الرئيسية في زيارة جديدة: نعرض قائمة الطلبات الحالية
+      if (!o || o.status === 'picked') { res.writeHead(302, { Location: '/c?app=1', 'Cache-Control': 'no-store' }); return res.end(); }
+      return send(res, 200, page('order.html'));
+    }
     if (p === '/.well-known/apple-app-site-association') return send(res, 200, fs.readFileSync(path.join(__dirname, 'appclip/apple-app-site-association')), 'application/json');
     if (p === '/sw.js') return send(res, 200, fs.readFileSync(path.join(__dirname, 'public/sw.js')), 'text/javascript');
     if (p === '/chime.mp3') return send(res, 200, fs.readFileSync(path.join(__dirname, 'assets/chime.mp3')), 'audio/mpeg');
@@ -194,7 +204,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/qr.svg') return send(res, 200, await QRCode.toString(String(url.searchParams.get('text') || '').slice(0, 500), { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }), 'image/svg+xml');
     if (p === '/manifest.webmanifest') return send(res, 200, JSON.stringify({
-      id: '/', name: 'طلبك جاهز', short_name: 'طلبك جاهز', lang: 'ar', dir: 'rtl', display: 'standalone', start_url: '/c?app=1', scope: '/',
+      id: '/', name: 'طلبك جاهز', short_name: 'طلبك جاهز', lang: 'ar', dir: 'rtl', display: 'standalone', start_url: /^[a-f0-9]+$/.test(url.searchParams.get('o') || '') ? `/o/${url.searchParams.get('o')}?app=1` : '/c?app=1', scope: '/',
       background_color: '#f6f3ee', theme_color: '#0f3d2e',
       icons: [192, 512].map(n => ({ src: `/icon-${n}.png`, sizes: `${n}x${n}`, type: 'image/png', purpose: 'any' })) }), 'application/manifest+json');
     if ((m = p.match(/^\/(?:apple-touch-icon|icon-(180|192|512))(?:-precomposed)?\.png$/))) return send(res, 200, fs.readFileSync(path.join(__dirname, `assets/icon-${m[1] || 180}.png`)), 'image/png');
@@ -218,7 +228,7 @@ const server = http.createServer(async (req, res) => {
       else if (a === 'ack') { if (!o.ackAt) { o.ackAt = now(); log(o, 'customer_ack'); } }
       else if (a === 'push' && b.endpoint) { if (!o.push.some(s => s.endpoint === b.endpoint)) o.push.push(b); log(o, 'webpush_subscribed', { host: new URL(b.endpoint).host }); }
       else if (a === 'apns' && b.token) { if (!o.apns.includes(b.token)) o.apns.push(b.token); log(o, 'apns_registered'); }
-      else if (a === 'ping') log(o, 'page', { state: String(b.state || '').slice(0, 40) });
+      else if (a === 'ping') log(o, 'page', { state: String(b.state || '').slice(0, 80) });
       else if (a === 'test') { for (const st of o.streams) st.testTone = true; log(o, 'test_tone'); }
       return json(res, publicOrder(o));
     }
