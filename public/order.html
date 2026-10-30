@@ -230,6 +230,8 @@ function render() {
     $('status').textContent = 'طلبك جاهز، تفضل بالاستلام';
     document.body.classList.add('ready'); $('ack').classList.remove('hidden'); $('arm').classList.add('hidden');
     api('ping', { state: 'ready_page_' + document.visibilityState }); showAlarm();
+    // إذا كان تطبيق آخر (فيديو أو موسيقى) أوقف بثنا، نحاول استعادته لحظة الجاهزية (ينجح في Chrome أندرويد غالبا)
+    if (armed && !APP && (player.paused || player.error)) startAudio().then(() => api('ping', { state: 'audio_resumed_on_ready' })).catch(() => api('ping', { state: 'audio_resume_failed' }));
   } else if (status === 'picked') {
     stopAlarm(); ['ack','armed','paused','rearm','arm','heard','louder','tablecard'].forEach(x=>$(x).classList.add('hidden'));
     $('done').classList.remove('hidden'); $('status').textContent = 'تم التسليم'; stopAudio();
