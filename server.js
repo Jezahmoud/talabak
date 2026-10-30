@@ -230,7 +230,7 @@ const page = (name, base = PUBLIC_URL) => fs.readFileSync(path.join(__dirname, '
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v10', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v11', 'text/plain');
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
     if ((m = p.match(/^\/o\/([a-f0-9]+)$/))) {
@@ -255,6 +255,7 @@ const server = http.createServer(async (req, res) => {
     if ((m = p.match(/^\/(ready-banner|ready-art|wait-art|badge)\.png$/))) { res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' }); return res.end(fs.readFileSync(path.join(__dirname, `assets/${m[1]}.png`))); }
     if ((m = p.match(/^\/(?:apple-touch-icon|icon-(180|192|512))(?:-precomposed)?\.png$/))) return send(res, 200, fs.readFileSync(path.join(__dirname, `assets/icon-${m[1] || 180}.png`)), 'image/png');
     if (p === '/app') return send(res, 200, page('app.html', BASE));
+    if (p === '/board') return send(res, 200, page('board.html', BASE));
     if (p === '/api/devices' && req.method === 'POST') {
       const b = await readBody(req); const id = String(b.id || '').replace(/[^a-z0-9]/gi, '').slice(0, 40); if (!id) return json(res, { error: 'id' }, 400);
       let d = devices.get(id); if (!d) { d = { id, subs: [], phone: '', ua: String(req.headers['user-agent'] || '').slice(0, 80), createdAt: now(), log: [] }; devices.set(id, d); devLog(d, 'created'); }

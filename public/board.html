@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>شاشة الطلبات | {{CAFE}}</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#0b1612; color:#fff; font-family:-apple-system,"SF Arabic","Segoe UI",Tahoma,sans-serif; min-height:100vh; display:flex; flex-direction:column; }
+  header { display:flex; justify-content:space-between; align-items:center; padding:18px 28px; border-bottom:1px solid #1f3a30; }
+  header b { font-size:30px; } header span { color:#9fb8ad; font-size:18px; }
+  main { flex:1; display:grid; grid-template-columns: 1.4fr 1fr; gap:0; }
+  section { padding:24px 28px; } section + section { border-inline-start:1px solid #1f3a30; }
+  h2 { margin:0 0 16px; font-size:26px; color:#9fb8ad; font-weight:700; }
+  .ready h2 { color:#5ee29a; }
+  .grid { display:flex; flex-wrap:wrap; gap:18px; }
+  .n { font-size:120px; font-weight:900; line-height:1; padding:18px 34px; border-radius:28px; font-variant-numeric:tabular-nums; }
+  .ready .n { background:#1f8a4c; color:#fff; animation: pulse 1.2s ease-in-out infinite; }
+  .wait .n { font-size:64px; background:#16281f; color:#cfe3d8; padding:14px 26px; }
+  @keyframes pulse { 0%,100% { transform:scale(1); box-shadow:0 0 0 0 rgba(94,226,154,.6);} 50% { transform:scale(1.04); box-shadow:0 0 0 18px rgba(94,226,154,0);} }
+  .empty { color:#6f8a7e; font-size:24px; }
+  footer { text-align:center; color:#6f8a7e; padding:10px; font-size:14px; }
+</style>
+</head>
+<body>
+<header><b>{{CAFE}}</b><span>طلبك جاهز؟ رقمك بيظهر هنا بالأخضر</span></header>
+<main>
+  <section class="ready"><h2>جاهز الآن</h2><div class="grid" id="ready"><div class="empty">لا توجد طلبات جاهزة</div></div></section>
+  <section class="wait"><h2>قيد التحضير</h2><div class="grid" id="wait"><div class="empty">—</div></div></section>
+</main>
+<footer>تظهر الأرقام الجاهزة تلقائيا من الكاشير، وتختفي بعد التسليم</footer>
+<script>
+async function load() {
+  try {
+    const l = await (await fetch('/api/orders')).json();
+    const ready = l.filter(o => o.status === 'ready'), wait = l.filter(o => o.status === 'waiting');
+    document.getElementById('ready').innerHTML = ready.length ? ready.map(o => `<div class="n">${o.number}</div>`).join('') : '<div class="empty">لا توجد طلبات جاهزة</div>';
+    document.getElementById('wait').innerHTML = wait.length ? wait.map(o => `<div class="n">${o.number}</div>`).join('') : '<div class="empty">—</div>';
+  } catch {}
+}
+load(); setInterval(load, 2000);
+// تبقى الشاشة شغالة إذا كانت على جهاز لوحي
+if ('wakeLock' in navigator) navigator.wakeLock.request('screen').catch(() => {});
+</script>
+</body>
+</html>

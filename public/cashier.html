@@ -23,6 +23,7 @@
   .acts { grid-column:1/-1; display:flex; gap:8px; }
   .acts button { flex:1; }
   .r { background:var(--ok); color:#fff; } .p { background:#e9e5dd; color:#333; }
+  .tl { font-size:14px; font-weight:700; margin:4px 0; } .tl.g { color:var(--ok); } .tl.y { color:var(--warn); } .tl.r { color:var(--bad); }
   details { grid-column:1/-1; font-size:12px; color:var(--muted); } details pre { white-space:pre-wrap; margin:6px 0 0; direction:ltr; text-align:left; }
 </style>
 </head>
@@ -32,6 +33,7 @@
   <div class="cafeqr"><img src="/qr/cafe.svg" alt=""><div>رمز ثابت للمقهى<br>يختار منه العميل رقم طلبه</div></div>
   <div class="cafeqr"><img src="/qr/app.svg" alt=""><div>رمز التسجيل مرة واحدة<br>يخلي الجوال يهتز ويضيء</div></div>
   <a href="/sticker" target="_blank" style="font:700 15px Tahoma;color:#0f3d2e;padding:10px">ملصق الكاونتر مع رمز الواي فاي</a>
+  <a href="/board" target="_blank" style="font:700 15px Tahoma;color:#0f3d2e;padding:10px">شاشة الطلبات للكاونتر</a>
   <span style="display:inline-flex;gap:6px;align-items:center"><input id="phone" type="tel" placeholder="جوال العميل (اختياري)" style="font:16px Tahoma;padding:10px;border:1px solid #ccc;border-radius:10px;width:190px;direction:ltr"><button class="new" id="new">طلب جديد</button></span>
   <span id="devs" style="font:14px Tahoma;color:#5b6b64"></span>
 </div>
@@ -47,12 +49,20 @@ function audioState(o) {
     ? `<span class="b">البث متصل لكن الجهاز توقف عن القراءة منذ ${s.lastDrainAgoSec} ث</span>`
     : `<span class="g">الجهاز يسحب البث الصوتي</span> (${s.ageSec} ث)`).join('<br>');
 }
+// إشارة مرور: هل يمكن الوصول لجوال العميل الآن؟ تحسم قبل أن يبتعد عن الكاشير
+function reach(o) {
+  if (o.status !== 'waiting') return '';
+  const live = o.streams.some(s => !(s.blocked && s.lastDrainAgoSec > 8));
+  if (o.linkedDevices || o.pushCount) return '<div class="tl g">🟢 يرن ويهتز حتى والجوال مقفل</div>';
+  if (live) return '<div class="tl y">🟡 صوت فقط' + (o.heard ? '' : '، ولم يؤكد أنه يسمع') + '. إذا كان صوته مقفلا فأرشده لشاشة الطلبات</div>';
+  return '<div class="tl r">🔴 جواله غير متصل. نبّهه الآن: شاشة الطلبات أو جهاز نداء احتياطي</div>';
+}
 function card(o) {
   const t = new Date(o.createdAt).toLocaleTimeString('ar-SA', { hour:'2-digit', minute:'2-digit' });
   const ev = o.events.map(e => `${new Date(e.t).toLocaleTimeString('en-GB')}  ${e.type}${Object.keys(e).length>2?' '+JSON.stringify(Object.fromEntries(Object.entries(e).filter(([k])=>k!=='t'&&k!=='type'))):''}`).join('\n');
   return `<div class="card">
     <a href="/o/${o.id}" target="_blank"><img src="/qr/${o.id}.svg" alt=""></a>
-    <div><div><span class="n">${o.number}</span><span class="st ${o.status}">${LBL[o.status]}</span></div>
+    <div><div><span class="n">${o.number}</span><span class="st ${o.status}">${LBL[o.status]}</span></div>${reach(o)}
       <div class="ch">${t} · ${audioState(o)}<br>
         جوال العميل: ${o.linkedDevices ? `<span class="g">مسجل ✅ يوصله إشعار يرن ويهتز</span>` : (o.phoneTail ? `<span class="w">…${o.phoneTail} غير مسجل</span>` : 'لم يُدخل')}<br>
         الصوت: ${o.heard ? '<span class="g">العميل أكد أنه سمع</span>' : '<span class="w">لم يؤكد</span>'} · اهتزاز: ${o.pushCount ? `<span class="g">مفعل${o.pushApple ? ' (ايفون)' : ''}</span>` : 'لا'} · App Clip: ${o.apnsCount ? '<span class="g">مسجل</span>' : 'لا'}
