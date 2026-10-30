@@ -1,3 +1,5 @@
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 // عامل الخدمة: يعرض إشعار الجاهزية (أندرويد وأي متصفح يدعم Web Push داخل التبويب)
 self.addEventListener('push', e => {
   let d = {}; try { d = e.data.json(); } catch {}

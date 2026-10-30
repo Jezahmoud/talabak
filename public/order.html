@@ -97,19 +97,23 @@ function startAudio() {
 }
 function stopAudio() { player.pause(); player.removeAttribute('src'); player.load(); }
 
+// نسجل عامل الخدمة مبكرا عند فتح الصفحة، لأن كروم يرفض الاشتراك إذا لم يكن عامل الخدمة نشطا بعد
+const swReady = ('serviceWorker' in navigator) ? navigator.serviceWorker.register('/sw.js').then(() => navigator.serviceWorker.ready).catch(e => { api('ping', { state:'sw_err ' + e.message }); return null; }) : Promise.resolve(null);
 async function enablePush() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return false;
+  let step = 'perm';
   try {
-    const reg = await navigator.serviceWorker.register('/sw.js');
-    const perm = await Notification.requestPermission();
+    const perm = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();   // داخل لمسة المستخدم مباشرة
     if (perm !== 'granted') { api('ping', { state:'push_'+perm }); return false; }
-    const key = b64ToU8(VAPID);
+    step = 'sw'; const reg = await Promise.race([swReady, new Promise(r => setTimeout(() => r(null), 8000))]);
+    if (!reg) { api('ping', { state:'push_err sw_not_ready' }); return false; }
+    step = 'sub'; const key = b64ToU8(VAPID);
     let sub = await reg.pushManager.getSubscription();
     if (sub) { const k = sub.options && sub.options.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
       if (!k || k.length !== key.length || k.some((v, i) => v !== key[i])) { await sub.unsubscribe().catch(()=>{}); sub = null; } }
     if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: key });
-    await api('push', sub.toJSON()); return true;
-  } catch(e) { api('ping', { state:'push_err' }); return false; }
+    step = 'save'; await api('push', sub.toJSON()); return true;
+  } catch(e) { api('ping', { state:`push_err ${step} ${e.name}: ${e.message}`.slice(0, 80) }); return false; }
 }
 
 $('arm').onclick = async () => {
