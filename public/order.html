@@ -37,7 +37,17 @@
 
   <div class="note ok hidden" id="armed">
     التنبيه مفعل. يمكنك قفل الشاشة ووضع الجوال في جيبك، وسيرن الجوال عند جاهزية طلبك.
-    <br>سمعت نغمة التجربة الآن؟ إن لم تسمعها فارفع صوت الوسائط.
+  </div>
+  <div class="note hidden" id="heard">
+    <b>هل سمعت نغمة التجربة بوضوح؟</b>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="big" id="yes" style="padding:14px">نعم</button>
+      <button class="big ghost" id="no" style="padding:14px">لا، أعدها</button>
+    </div>
+  </div>
+  <div class="note warn hidden" id="louder">
+    ارفع الصوت الآن من الأزرار الجانبية للجوال، ثم اضغط «لا، أعدها» مرة أخرى حتى تسمعها بوضوح.
+    <br>الصوت الذي يتحكم في التنبيه هو صوت الوسائط، وليس صوت الرنين.
   </div>
   <div class="note warn hidden" id="paused">
     توقف التنبيه الصوتي. اضغط الزر أدناه لإعادة تفعيله.
@@ -46,7 +56,7 @@
   <button class="big hidden" id="ack">أنا في الطريق لاستلامه</button>
   <div class="note hidden" id="done">تم تسليم الطلب. بالعافية.</div>
 </main>
-<footer>لا يحتاج تطبيقا ولا تسجيلا. يعمل التنبيه ما دامت هذه الصفحة مفتوحة.</footer>
+<footer>لا يحتاج تطبيقا ولا تسجيلا. يعمل التنبيه والشاشة مقفلة، ما لم تغلق هذه الصفحة أو تشغل موسيقى أو فيديو.</footer>
 <audio id="player" preload="none" playsinline></audio>
 <script>
 const id = location.pathname.split('/').pop();
@@ -94,9 +104,17 @@ $('arm').onclick = async () => {
   // في الوضع التلقائي: إذا قبل العميل الإشعارات (أندرويد غالبا) نوقف البث بعد نغمة التجربة لتوفير البطارية وعدم مزاحمة موسيقاه
   // البث الصوتي يبقى شغالا على كل الأجهزة، والإشعار قناة إضافية فوقه (أندرويد)
   armed = true;
-  $('arm').classList.add('hidden'); $('armed').classList.remove('hidden');
+  $('arm').classList.add('hidden'); $('armed').classList.remove('hidden'); $('heard').classList.remove('hidden');
   api('ping', { state: `armed audio=${wantAudio} push=${pushOn}` });
 };
+$('yes').onclick = () => { $('heard').classList.add('hidden'); $('louder').classList.add('hidden'); api('ping', { state:'heard_yes' }); };
+$('no').onclick = () => { $('louder').classList.remove('hidden'); api('test'); api('ping', { state:'heard_no' });
+  if (player.paused) startAudio().catch(()=>{}); };
+// إذا انقطع البث (تبدل الشبكة مثلا) نعيد الاتصال تلقائيا متى أمكن
+function retry() { if (armed && status === 'waiting' && (player.paused || player.error)) startAudio().catch(()=>{}); }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') retry(); });
+window.addEventListener('online', retry);
+player.addEventListener('stalled', () => setTimeout(retry, 3000));
 
 player.addEventListener('pause', () => { if (armed && status === 'waiting' && player.getAttribute('src')) { $('paused').classList.remove('hidden'); $('rearm').classList.remove('hidden'); api('ping', { state:'audio_paused' }); } });
 player.addEventListener('playing', () => { $('paused').classList.add('hidden'); $('rearm').classList.add('hidden'); });

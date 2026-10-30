@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ملصق الكاونتر | طلبك جاهز</title>
+<style>
+  body { margin:0; font-family:-apple-system,"SF Arabic","Segoe UI",Tahoma,sans-serif; background:#f6f3ee; color:#13201b; }
+  .wrap { max-width:720px; margin:0 auto; padding:18px; }
+  form { background:#fff; border-radius:16px; padding:16px; display:grid; gap:10px; }
+  label { font-weight:700; font-size:15px; }
+  input, select { font:18px Tahoma; padding:10px; border:1px solid #ccc; border-radius:10px; width:100%; box-sizing:border-box; direction:ltr; text-align:left; }
+  button { font:700 18px Tahoma; padding:14px; border:0; border-radius:12px; background:#0f3d2e; color:#fff; }
+  .sticker { background:#fff; border:3px solid #0f3d2e; border-radius:24px; margin-top:18px; padding:20px; text-align:center; }
+  .sticker h1 { margin:0 0 4px; font-size:26px; } .sticker p { margin:0 0 14px; color:#5b6b64; }
+  .row { display:flex; gap:16px; justify-content:center; flex-wrap:wrap; }
+  .box { flex:1; min-width:240px; border:1px solid #e6e1d8; border-radius:16px; padding:14px; }
+  .box img { width:100%; max-width:260px; height:auto; }
+  .step { font-size:20px; font-weight:800; margin-bottom:6px; }
+  .mu { color:#5b6b64; font-size:14px; }
+  @media print { form, .noprint { display:none; } body { background:#fff; } .sticker { border-width:2px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <form method="get" class="noprint">
+    <div class="mu">يطبع هذا الملصق ويوضع على الكاونتر. يغني عن طباعة رمز لكل طلب، ويخدم العميل الذي ليس معه إنترنت عبر شبكة المقهى.</div>
+    <label>اسم شبكة الواي فاي في المقهى</label><input name="ssid" id="ssid" placeholder="CafeWiFi">
+    <label>كلمة المرور</label><input name="pass" id="pass" placeholder="اتركها فارغة إذا كانت الشبكة مفتوحة">
+    <button>جهز الملصق</button>
+  </form>
+  <div class="sticker" id="st">
+    <h1>{{CAFE}}</h1>
+    <p>جوالك يرن عند جاهزية طلبك، بدون تطبيق</p>
+    <div class="row">
+      <div class="box" id="wifibox">
+        <div class="step">١. اتصل بشبكة المقهى</div>
+        <img id="wifiqr" alt="">
+        <div class="mu" id="wifitxt"></div>
+      </div>
+      <div class="box">
+        <div class="step" id="s2">٢. اختر رقم طلبك</div>
+        <img src="/qr/cafe.svg" alt="">
+        <div class="mu">امسح بالكاميرا، اضغط رقم طلبك ثم «نبهني»</div>
+      </div>
+    </div>
+  </div>
+  <p class="mu noprint" style="text-align:center;margin-top:12px">للطباعة استخدم زر المشاركة ثم طباعة.</p>
+</div>
+<script>
+const q = new URLSearchParams(location.search), ssid = q.get('ssid') || '', pass = q.get('pass') || '';
+document.getElementById('ssid').value = ssid; document.getElementById('pass').value = pass;
+const esc = v => v.replace(/([\\;,:"])/g, '\\$1');
+if (ssid) {
+  const wifi = `WIFI:T:${pass ? 'WPA' : 'nopass'};S:${esc(ssid)};${pass ? 'P:' + esc(pass) + ';' : ''};`;
+  document.getElementById('wifiqr').src = '/qr.svg?text=' + encodeURIComponent(wifi);
+  document.getElementById('wifitxt').textContent = 'الشبكة: ' + ssid + (pass ? '  ·  كلمة المرور: ' + pass : '');
+} else {
+  document.getElementById('wifibox').style.display = 'none';
+  document.getElementById('s2').textContent = 'اختر رقم طلبك';
+}
+</script>
+</body>
+</html>

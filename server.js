@@ -118,12 +118,14 @@ setInterval(() => {
 }, 50);
 
 // ---------- Push channels ----------
-async function notifyAll(o) {
+async function notifyAll(o, repeat = false) {
+  if (repeat && !o.push.length) return;
   const payload = JSON.stringify({ title: `${CAFE_NAME}`, body: `طلبك رقم ${o.number} جاهز، تفضل بالاستلام`, tag: `order-${o.id}`, url: `${o.base || PUBLIC_URL}/o/${o.id}` });
   for (const sub of o.push) {
     try { const r = await webpush.sendNotification(sub, payload, { TTL: 600, urgency: 'high' }); log(o, 'webpush_sent', { status: r.statusCode }); }
     catch (e) { log(o, 'webpush_error', { status: e.statusCode, msg: String(e.body || e.message).slice(0, 120) }); }
   }
+  if (repeat) return;
   for (const tok of o.apns) {
     try { const st = await sendApns(tok, { aps: { alert: { title: CAFE_NAME, body: `طلبك رقم ${o.number} جاهز` }, sound: 'default', 'interruption-level': 'time-sensitive',
       'target-content-id': `${o.base || PUBLIC_URL}/o/${o.id}` } }); log(o, 'apns_sent', { status: st }); }
@@ -155,7 +157,14 @@ const sseClients = new Map(); // id -> Set(res)
 function sse(o) { const set = sseClients.get(o.id); if (!set) return; const d = `data: ${JSON.stringify({ status: o.status, number: o.number })}\n\n`; for (const r of set) r.write(d); }
 
 // ---------- Actions ----------
-function setReady(o, by) { if (o.status !== 'waiting') return; o.status = 'ready'; o.readyAt = now(); log(o, 'ready', { by }); notifyAll(o); }
+// عند الجاهزية: إشعار فوري ثم تكرار كل 12 ثانية حتى يستجيب العميل أو تمر 3 دقائق، فيهتز الجوال مع كل تكرار (أندرويد)
+function setReady(o, by) {
+  if (o.status !== 'waiting') return; o.status = 'ready'; o.readyAt = now(); log(o, 'ready', { by }); notifyAll(o);
+  const iv = setInterval(() => {
+    if (o.status !== 'ready' || o.ackAt || now() - o.readyAt > 180e3 || !o.push.length) return clearInterval(iv);
+    notifyAll(o, true);
+  }, 12000);
+}
 function setPicked(o) { o.status = 'picked'; o.pickedAt = now(); log(o, 'picked'); }
 
 // ---------- HTTP ----------
@@ -168,7 +177,7 @@ const page = (name, base = PUBLIC_URL) => fs.readFileSync(path.join(__dirname, '
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v2', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v3', 'text/plain');
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
     if ((m = p.match(/^\/o\/([a-f0-9]+)$/))) return orders.has(m[1]) ? send(res, 200, page('order.html')) : send(res, 404, 'الطلب غير موجود');
@@ -180,6 +189,8 @@ const server = http.createServer(async (req, res) => {
       const target = m[1] === 'cafe' ? `${BASE}/c` : `${BASE}/o/${m[1]}`;
       return send(res, 200, await QRCode.toString(target, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }), 'image/svg+xml');
     }
+    if (p === '/qr.svg') return send(res, 200, await QRCode.toString(String(url.searchParams.get('text') || '').slice(0, 500), { type: 'svg', margin: 1, errorCorrectionLevel: 'M' }), 'image/svg+xml');
+    if (p === '/sticker') return send(res, 200, page('sticker.html', BASE));
     if ((m = p.match(/^\/events\/([a-f0-9]+)$/))) {
       const o = orders.get(m[1]); if (!o) return send(res, 404, '');
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
@@ -191,7 +202,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/orders' && req.method === 'GET') return json(res, [...orders.values()].filter(o => now() - o.createdAt < 6 * 3600e3).reverse().map(publicOrder));
     if (p === '/api/open' && req.method === 'GET') return json(res, [...orders.values()].filter(o => o.status === 'waiting' && now() - o.createdAt < 30 * 60e3).reverse().map(o => ({ id: o.id, number: o.number })));
     if (p === '/api/orders' && req.method === 'POST') { const b = await readBody(req); const o = newOrder(b.number); o.base = BASE; return json(res, publicOrder(o)); }
-    if ((m = p.match(/^\/api\/orders\/([a-f0-9]+)(?:\/(ready|picked|ack|push|apns|ping))?$/))) {
+    if ((m = p.match(/^\/api\/orders\/([a-f0-9]+)(?:\/(ready|picked|ack|push|apns|ping|test))?$/))) {
       const o = orders.get(m[1]); if (!o) return json(res, { error: 'not found' }, 404);
       const a = m[2]; const b = req.method === 'POST' ? await readBody(req) : {};
       if (a === 'ready') setReady(o, 'cashier');
@@ -200,6 +211,7 @@ const server = http.createServer(async (req, res) => {
       else if (a === 'push' && b.endpoint) { if (!o.push.some(s => s.endpoint === b.endpoint)) o.push.push(b); log(o, 'webpush_subscribed', { host: new URL(b.endpoint).host }); }
       else if (a === 'apns' && b.token) { if (!o.apns.includes(b.token)) o.apns.push(b.token); log(o, 'apns_registered'); }
       else if (a === 'ping') log(o, 'page', { state: String(b.state || '').slice(0, 40) });
+      else if (a === 'test') { for (const st of o.streams) st.testTone = true; log(o, 'test_tone'); }
       return json(res, publicOrder(o));
     }
     // تكامل Foodics (هيكل مبدئي): ينشئ الطلب عند وصول حدث إنشاء، ويعلن الجاهزية عند وصول حالة "منتهٍ".
