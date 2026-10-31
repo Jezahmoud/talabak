@@ -109,7 +109,7 @@ const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform 
 const STANDALONE = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches || qs.get('force') === '1';
 const APP = STANDALONE;                          // داخل تطبيق الشاشة الرئيسية: الإشعار هو القناة، لا البث الصوتي
 const DEV = localStorage.getItem('talabak_dev');
-let armed = false, pushOn = false, status = 'waiting', number = '{{NUMBER}}', firstArm = true;
+let armed = false, pushOn = false, status = 'waiting', number = '{{NUMBER}}', firstArm = true, eta = null;
 
 function api(a, body) { return fetch(`/api/orders/${id}/${a}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{}) }).catch(()=>{}); }
 function b64ToU8(s){ const p='='.repeat((4-s.length%4)%4); const b=atob((s+p).replace(/-/g,'+').replace(/_/g,'/')); return Uint8Array.from([...b].map(c=>c.charCodeAt(0))); }
@@ -240,6 +240,9 @@ function render() {
     stopAlarm(); acked = false; wasReady = false; $('ack').classList.add('hidden'); setMeta(false);
     $('status').textContent = 'التنبيه كان بالخطأ، طلبك باقي قيد التحضير وبنبهك أول ما يجهز';
     if (!armed) $('arm').classList.remove('hidden');
+  } else if (status === 'waiting' && eta && !wasReady) {
+    const lo = Math.max(1, Math.round(eta.lowSec / 60)), hi = Math.max(lo + 1, Math.round(eta.highSec / 60));
+    $('status').textContent = `جاري التحضير، غالبا خلال ${lo} إلى ${hi} دقائق`;
   } else if (status === 'picked') {
     stopAlarm(); ['ack','armed','paused','rearm','arm','heard','louder','tablecard'].forEach(x=>$(x).classList.add('hidden'));
     $('done').classList.remove('hidden'); $('status').textContent = 'تم التسليم'; stopAudio();
@@ -250,7 +253,7 @@ const es = new EventSource(`/events/${id}`);
 let esFails = 0;
 es.onopen = () => { esFails = 0; $('netwarn').classList.add('hidden'); };
 es.onerror = () => { if (++esFails >= 3) $('netwarn').classList.remove('hidden'); };
-es.onmessage = e => { esFails = 0; $('netwarn').classList.add('hidden'); const d = JSON.parse(e.data); const changed = d.status !== status; status = d.status; number = d.number; if (changed || !$('num').textContent.match(/\d/)) render(); };
+es.onmessage = e => { esFails = 0; $('netwarn').classList.add('hidden'); const d = JSON.parse(e.data); const changed = d.status !== status || (d.eta && !eta); status = d.status; number = d.number; if (d.eta) eta = d.eta; if (changed || !$('num').textContent.match(/\d/)) render(); };
 document.addEventListener('visibilitychange', () => api('ping', { state: document.visibilityState + (player.paused ? ' paused' : ' playing') + (('Notification' in window) ? ' perm=' + Notification.permission : '') }));
 if (qs.get('ack') === '1') { api('ack'); }
 </script>

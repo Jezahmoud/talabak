@@ -58,6 +58,7 @@
   <span id="devs" style="font:14px Tahoma;color:#5b6b64"></span>
   <button class="btn-plain" id="logout" style="font-size:14px;padding:8px 12px">خروج</button>
 </div>
+<div id="stats" style="display:flex;gap:14px;flex-wrap:wrap;font:14px Tahoma;color:#5b6b64;padding:4px 12px"></div>
 <div class="list" id="list"></div>
 <details id="pickedbox"><summary class="sec" id="pickedsum">المسلّمة</summary><div class="list" id="picked"></div></details>
 <script>
@@ -123,6 +124,16 @@ function card(o) {
 }
 let lastHtml = '', lastPicked = '';
 let fails = 0;
+
+// شريط الارقام: ما يراه صاحب المقهى من بيانات يومه (المصدر: السجل الدائم للاحداث)
+const mm = s => s == null ? '—' : (s < 60 ? Math.round(s) + ' ث' : Math.floor(s / 60) + ':' + String(Math.round(s % 60)).padStart(2, '0') + ' د');
+async function loadStats() {
+  try { const r = await fetch('/api/stats?days=1', { cache: 'no-store' }); if (!r.ok) return; const s = await r.json();
+    const parts = [`اليوم: <b>${s.orders}</b> طلب`, `وسيط التحضير: <b>${mm(s.prepSec.median)}</b>`, `وسيط الاستلام بعد الجاهزية: <b>${mm(s.pickupSec.median)}</b>`,
+      `تأخر الاستلام فوق 5 د: <b>${s.lateOver5min}</b>`, `تأكيد العميل: <b>${s.ackRate == null ? '—' : Math.round(s.ackRate * 100) + '%'}</b>`, `آيفون ${s.os.ios} / أندرويد ${s.os.android}`];
+    $('stats').innerHTML = parts.map(p => '<span>' + p + '</span>').join('');
+  } catch {}
+}
 async function load() {
   let l;
   try { const r = await fetch('/api/orders', { cache: 'no-store' }); if (r.status === 401) { showLogin(); return; } l = await r.json(); fails = 0; $('offline').classList.add('hidden'); }
@@ -145,7 +156,7 @@ async function boot() {
   if (me.noPin) { $('lerr').textContent = 'لم يضبط الرمز السري بعد. أضفه في إعدادات الخادم باسم CASHIER_PIN ثم أعد التحميل.'; }
   if (!me.cashier) return showLogin();
   $('pinwarn').classList.toggle('hidden', !me.shortPin);
-  timers.forEach(clearInterval); load(); loadDevs(); timers = [setInterval(load, 1500), setInterval(loadDevs, 5000)];
+  timers.forEach(clearInterval); load(); loadDevs(); loadStats(); timers = [setInterval(load, 1500), setInterval(loadDevs, 5000), setInterval(loadStats, 60000)];
 }
 $('pickedbox').ontoggle = () => { lastPicked = ''; load(); };
 boot();

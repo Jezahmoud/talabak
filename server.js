@@ -92,6 +92,7 @@ function newOrder(number, source = 'cashier', meta = {}) {
   const id = crypto.randomBytes(8).toString('hex');
   const o = { id, number: String(number ?? nextNumber++), status: 'waiting', source, meta, createdAt: now(), readyAt: null, ackAt: null, pickedAt: null,
     phone: normPhone(meta.phone), devices: new Set(), clients: new Set(), acks: new Set(), push: [], apns: [], streams: new Set(), events: [] };
+  try { o.eta = estimatePrep(o); } catch {}
   orders.set(id, o); log(o, 'created', { source, phone: o.phone ? '***' + o.phone.slice(-4) : undefined }); saveOrders(); return o;
 }
 // ---------- Devices (جوالات مسجلة مرة واحدة: تطبيق الشاشة الرئيسية) ----------
@@ -112,8 +113,61 @@ function devicesForOrder(o) {
   return out;
 }
 loadOrders();
-function log(o, type, data = {}) { o.events.push({ t: now(), type, ...data }); if (o.events.length > 200) o.events.shift(); sse(o); saveOrders(); }
-function customerOrder(o) { return { id: o.id, number: o.number, status: o.status, table: o.table || '' }; }
+// ===== سجل الاحداث الدائم (اساس التحليلات والتنبؤ) =====
+// كل حدث يُكتب سطرا في ملف events-YYYY-MM.jsonl ولا يُحذف ابدا. لا يحتوي ارقام جوال ولا هويات عملاء، فقط ارقام الطلبات والازمنة والقناة ونوع الجهاز.
+function osOf(ua) { ua = String(ua || ''); return /iPhone|iPad/.test(ua) ? 'ios' : /Android/.test(ua) ? 'android' : ua ? 'other' : ''; }
+let evBuf = [], evT = null;
+function flushEvents() { evT = null; if (!evBuf.length) return; const file = path.join(DATA_DIR, 'events-' + riyadhDay(now()).slice(0, 7) + '.jsonl'); const lines = evBuf.join(''); evBuf = []; try { fs.appendFileSync(file, lines); } catch (e) { console.error('events:', e.message); } }
+function persistEvent(o, type, data) {
+  const row = { t: now(), day: riyadhDay(now()), oid: o.id, n: o.number, type, status: o.status, src: o.source,
+    sinceCreateSec: Math.round((now() - o.createdAt) / 1000), sinceReadySec: o.readyAt ? Math.round((now() - o.readyAt) / 1000) : null,
+    os: osOf(data.ua || (o.meta && o.meta.ua)), clients: o.clients.size, devices: o.devices.size, streams: o.streams.size, table: o.table ? 1 : 0, items: (o.meta && o.meta.items) || undefined };
+  for (const k of ['by', 'via', 'status', 'why', 'state', 'delayMs', 'n', 'apple', 'host', 'linked']) if (k in data && !(k in row)) row[k] = data[k];
+  if ('status' in data) row.httpStatus = data.status;
+  evBuf.push(JSON.stringify(row) + '\n'); if (!evT) evT = setTimeout(flushEvents, 1000);
+}
+process.on('exit', flushEvents); process.on('SIGTERM', () => { flushEvents(); process.exit(0); });
+function log(o, type, data = {}) { o.events.push({ t: now(), type, ...data }); if (o.events.length > 200) o.events.shift(); persistEvent(o, type, data); sse(o); saveOrders(); }
+
+// ===== احصائيات اولية من السجل الدائم (النسخة 1: متوسطات ونسب، بلا نماذج بعد) =====
+function readEvents(months = 1) {
+  const out = []; const d = new Date(now());
+  for (let i = 0; i < months; i++) { const m = new Date(d.getFullYear(), d.getMonth() - i, 1); const f = path.join(DATA_DIR, `events-${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}.jsonl`);
+    try { for (const l of fs.readFileSync(f, 'utf8').split('\n')) if (l) try { out.push(JSON.parse(l)); } catch {} } catch {} }
+  return out;
+}
+function pct(arr, p) { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(p * a.length))]; }
+function computeStats(days = 30) {
+  const since = now() - days * 86400e3; const ev = readEvents(2).filter(e => e.t >= since);
+  const byOrder = new Map(); for (const e of ev) { if (!byOrder.has(e.oid)) byOrder.set(e.oid, {}); const b = byOrder.get(e.oid); if (!(e.type in b)) b[e.type] = e; b._n = e.n; b._day = e.day; if (e.os && !b._os) b._os = e.os; }
+  const prep = [], pickup = [], ackLag = [], hours = {}, daysMap = {}, osCount = { ios: 0, android: 0, other: 0, unknown: 0 };
+  let created = 0, ready = 0, acked = 0, picked = 0, late = 0, chime = 0, push = 0, pushOk = 0;
+  for (const b of byOrder.values()) {
+    if (!b.created) continue; created++;
+    const h = new Date(b.created.t + 3 * 3600e3).getUTCHours(); hours[h] = (hours[h] || 0) + 1; daysMap[b._day] = (daysMap[b._day] || 0) + 1;
+    osCount[b._os || 'unknown']++;
+    if (b.ready) { ready++; prep.push((b.ready.t - b.created.t) / 1000); }
+    if (b.customer_ack && b.ready) { acked++; ackLag.push((b.customer_ack.t - b.ready.t) / 1000); }
+    if (b.picked && b.ready) { picked++; const s = (b.picked.t - b.ready.t) / 1000; pickup.push(s); if (s > 300) late++; }
+    if (b.chime_injected) chime++;
+    if (b.webpush_sent) { push++; if (b.webpush_sent.httpStatus < 300) pushOk++; }
+  }
+  const peak = Object.entries(hours).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([h, n]) => ({ hour: +h, orders: n }));
+  return { days, orders: created, ready, picked, ackRate: ready ? +(acked / ready).toFixed(2) : null, pickedRate: ready ? +(picked / ready).toFixed(2) : null,
+    prepSec: { median: pct(prep, 0.5), p80: pct(prep, 0.8), p95: pct(prep, 0.95) }, pickupSec: { median: pct(pickup, 0.5), p80: pct(pickup, 0.8), p95: pct(pickup, 0.95) },
+    ackLagSec: { median: pct(ackLag, 0.5), p80: pct(ackLag, 0.8) }, lateOver5min: late, chimeDelivered: chime, pushSent: push, pushOk,
+    os: osCount, peakHours: peak, perDay: daysMap, note: 'النسخة 1: مؤشرات وصفية. التنبؤ بوقت الجاهزية وكشف الطلب المنسي يُفعّلان بعد تجمع نحو 500 طلب.' };
+}
+// تقدير اولي لوقت الجاهزية لطلب جديد: الوسيط في نفس الساعة خلال 30 يوما، مع نطاق p80. يتطور الى نموذج تعلم الة بعد تجمع البيانات.
+function estimatePrep(o) {
+  const ev = readEvents(2); const since = now() - 30 * 86400e3; const h = new Date(now() + 3 * 3600e3).getUTCHours();
+  const cr = new Map(), prep = [], prepH = [];
+  for (const e of ev) { if (e.t < since) continue; if (e.type === 'created') cr.set(e.oid, e.t); if (e.type === 'ready' && cr.has(e.oid)) { const s = (e.t - cr.get(e.oid)) / 1000; prep.push(s); if (new Date(e.t + 3 * 3600e3).getUTCHours() === h) prepH.push(s); } }
+  const src = prepH.length >= 20 ? prepH : prep; if (src.length < 10) return null;
+  const open = [...orders.values()].filter(x => x.status === 'waiting').length;
+  return { lowSec: Math.round(pct(src, 0.5)), highSec: Math.round(pct(src, 0.8)), basis: src.length, sameHour: src === prepH, openOrders: open };
+}
+function customerOrder(o) { return { id: o.id, number: o.number, status: o.status, table: o.table || '', eta: o.status === 'waiting' ? (o.eta || null) : null }; }
 function readyAgeSec(o) { return o.readyAt ? Math.round((now() - o.readyAt) / 1000) : null; }
 function boardOrder(o) { return { number: o.number, status: o.status, table: o.table || '', hot: !!(o.alert && o.alert.level === 2) }; }
 function publicOrder(o) {
@@ -246,7 +300,7 @@ function sendApns(token, body) {
 
 // ---------- SSE for open pages ----------
 const sseClients = new Map(); // id -> Set(res)
-function sse(o) { const set = sseClients.get(o.id); if (!set) return; const d = `data: ${JSON.stringify({ status: o.status, number: o.number })}\n\n`; for (const r of set) r.write(d); }
+function sse(o) { const set = sseClients.get(o.id); if (!set) return; const d = `data: ${JSON.stringify({ status: o.status, number: o.number, eta: o.status === 'waiting' ? (o.eta || null) : null })}\n\n`; for (const r of set) r.write(d); }
 
 // ---------- Actions ----------
 // عند الجاهزية: إشعار فوري ثم تكرار كل 12 ثانية حتى يستجيب العميل أو تمر 3 دقائق، فيهتز الجوال مع كل تكرار (أندرويد)
@@ -350,6 +404,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/logout' && req.method === 'POST') { res.writeHead(200, { 'Set-Cookie': 'tj_c=; Path=/; Max-Age=0' }); return res.end('{}'); }
     if (p === '/api/me') { const c = isCashier(req); return json(res, { cashier: c, noPin: PIN_IS_DEFAULT, shortPin: c && PIN_TOO_SHORT }); }
+    if (p === '/api/stats') { if (!isCashier(req)) return json(res, { error: 'auth' }, 401); return json(res, computeStats(Math.min(90, +(url.searchParams.get('days') || 30)))); }
     if (p === '/api/board') return json(res, [...orders.values()].filter(o => o.status !== 'picked' && now() - o.createdAt < 3 * 3600e3).map(boardOrder));
     if (p === '/' || p === '/cashier') return send(res, 200, page('cashier.html'));
     if (p === '/c') return send(res, 200, page('pick.html'));
@@ -361,7 +416,7 @@ const server = http.createServer(async (req, res) => {
       let key = clientKey(req, o); const headers = {};
       if (!key) {
         if (o.clients.size >= MAX_CLIENTS_PER_ORDER) return send(res, 409, page('busy.html', BASE, { NUMBER: o.number }));
-        key = crypto.randomBytes(12).toString('hex'); o.clients.add(key); log(o, 'client_joined', { n: o.clients.size });
+        key = crypto.randomBytes(12).toString('hex'); o.clients.add(key); if (!o.meta.ua) o.meta.ua = String(req.headers['user-agent'] || '').slice(0, 160); log(o, 'client_joined', { n: o.clients.size, ua: req.headers['user-agent'] });
         headers['Set-Cookie'] = `tj_o_${o.id}=${key}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400${/^https/.test(BASE) ? '; Secure' : ''}`;
       }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...SEC_HEADERS, ...headers });
