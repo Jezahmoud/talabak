@@ -240,9 +240,6 @@ function render() {
     stopAlarm(); acked = false; wasReady = false; $('ack').classList.add('hidden'); setMeta(false);
     $('status').textContent = 'التنبيه كان بالخطأ، طلبك باقي قيد التحضير وبنبهك أول ما يجهز';
     if (!armed) $('arm').classList.remove('hidden');
-  } else if (status === 'waiting' && eta && !wasReady) {
-    const lo = Math.max(1, Math.round(eta.lowSec / 60)), hi = Math.max(lo + 1, Math.round(eta.highSec / 60));
-    $('status').textContent = `جاري التحضير، غالبا خلال ${lo} إلى ${hi} دقائق`;
   } else if (status === 'picked') {
     stopAlarm(); ['ack','armed','paused','rearm','arm','heard','louder','tablecard'].forEach(x=>$(x).classList.add('hidden'));
     $('done').classList.remove('hidden'); $('status').textContent = 'تم التسليم'; stopAudio();

@@ -167,7 +167,7 @@ function estimatePrep(o) {
   const open = [...orders.values()].filter(x => x.status === 'waiting').length;
   return { lowSec: Math.round(pct(src, 0.5)), highSec: Math.round(pct(src, 0.8)), basis: src.length, sameHour: src === prepH, openOrders: open };
 }
-function customerOrder(o) { return { id: o.id, number: o.number, status: o.status, table: o.table || '', eta: o.status === 'waiting' ? (o.eta || null) : null }; }
+function customerOrder(o) { return { id: o.id, number: o.number, status: o.status, table: o.table || '', eta: null }; }
 function readyAgeSec(o) { return o.readyAt ? Math.round((now() - o.readyAt) / 1000) : null; }
 function boardOrder(o) { return { number: o.number, status: o.status, table: o.table || '', hot: !!(o.alert && o.alert.level === 2) }; }
 function publicOrder(o) {
@@ -300,7 +300,7 @@ function sendApns(token, body) {
 
 // ---------- SSE for open pages ----------
 const sseClients = new Map(); // id -> Set(res)
-function sse(o) { const set = sseClients.get(o.id); if (!set) return; const d = `data: ${JSON.stringify({ status: o.status, number: o.number, eta: o.status === 'waiting' ? (o.eta || null) : null })}\n\n`; for (const r of set) r.write(d); }
+function sse(o) { const set = sseClients.get(o.id); if (!set) return; const d = `data: ${JSON.stringify({ status: o.status, number: o.number, eta: null })}\n\n`; for (const r of set) r.write(d); }
 
 // ---------- Actions ----------
 // عند الجاهزية: إشعار فوري ثم تكرار كل 12 ثانية حتى يستجيب العميل أو تمر 3 دقائق، فيهتز الجوال مع كل تكرار (أندرويد)
