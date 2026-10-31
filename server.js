@@ -387,7 +387,7 @@ const page = (name, base = PUBLIC_URL, extra = {}) => Object.entries(extra).redu
 const server = http.createServer(async (req, res) => {
   const BASE = baseOf(req); const url = new URL(req.url, 'http://x'); const p = url.pathname; let m;
   try {
-    if (p === '/health') return send(res, 200, 'ok v17', 'text/plain');
+    if (p === '/health') return send(res, 200, 'ok v18', 'text/plain');
     if (p === '/api/login' && req.method === 'POST') {
       const ip = clientIp(req), f = loginFails.get(ip);
       if (!CASHIER_PIN) return json(res, { error: 'no_pin', msg: 'لم يضبط الرمز السري بعد. أضفه من إعدادات الخادم باسم CASHIER_PIN' }, 503);
